@@ -4,10 +4,20 @@ Petit jeu de foot rigolo pour enfants (6-12 ans), jouable dans le navigateur sur
 
 ## Où on en est
 
-Étape 4 sur 5 : six personnages dessinés et animés, stade avec public et panneaux, effets
-d'aptitudes, célébrations de but et sons de foule.
+**V1 en ligne** : https://blykegluk.github.io/bouskimatch/
 
-Étape suivante : mise en ligne finale (test par les enfants, corrections).
+Les cinq étapes prévues sont faites : prototype, match 3 contre 3, jeu à deux en ligne,
+personnages et rendu, finitions. Reste le test par les enfants, puis le plan de progression
+(skins, pouvoirs et persos à gagner en jouant).
+
+## Sur le téléphone
+
+Ouvre le lien, tourne le téléphone en paysage, et touche le bouton ⛶ pour le plein écran.
+Pour l'avoir comme une appli : menu du navigateur → « Ajouter à l'écran d'accueil ».
+
+Pendant un match, le bouton ⏸ en haut à gauche (ou Échap) ouvre la pause : reprendre,
+couper le son, ou revenir au menu. Un match solo se met en pause tout seul si le téléphone
+se verrouille. Le mode d'emploi s'affiche à la première partie, et le « ? » du menu le rouvre.
 
 ## Les personnages
 
