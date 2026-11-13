@@ -163,8 +163,11 @@ export class SnapshotBuffer {
 
 export type NetStatus = 'idle' | 'opening' | 'waiting' | 'connecting' | 'connected' | 'closed' | 'error';
 
+/** What went wrong, in terms the game can turn into a sentence for a child. */
+export type NetError = 'no-such-game' | 'code-taken' | 'offline' | 'other';
+
 export interface NetHandlers {
-  onStatus?: (status: NetStatus, detail?: string) => void;
+  onStatus?: (status: NetStatus, error?: NetError) => void;
   onStart?: (msg: StartMsg) => void;
   onHello?: (charId: string) => void;
   onSnapshot?: (snap: Snapshot, events: SimEvent[]) => void;
@@ -185,8 +188,16 @@ class Link {
     this.h = h;
   }
 
-  protected status(s: NetStatus, detail?: string): void {
-    if (!this.closed || s === 'closed') this.h.onStatus?.(s, detail);
+  protected status(s: NetStatus, error?: NetError): void {
+    if (!this.closed || s === 'closed') this.h.onStatus?.(s, error);
+  }
+
+  protected classify(e: unknown): NetError {
+    const type = (e as { type?: string }).type ?? '';
+    if (type === 'peer-unavailable') return 'no-such-game';
+    if (type === 'unavailable-id') return 'code-taken';
+    if (type === 'network' || type === 'disconnected' || type === 'server-error') return 'offline';
+    return 'other';
   }
 
   protected bind(conn: DataConnection): void {
@@ -242,8 +253,18 @@ export class HostLink extends Link {
       if (this.conn) { conn.close(); return; } // one guest at a time
       this.bind(conn);
     });
-    this.peer.on('error', (e) => this.status('error', String((e as Error).message ?? e)));
+    this.peer.on('error', (e) => {
+      // Someone already has this code: take another one and carry on.
+      if (this.classify(e) === 'code-taken' && this.onCodeTaken) {
+        this.onCodeTaken();
+        return;
+      }
+      this.status('error', this.classify(e));
+    });
   }
+
+  /** Set by the lobby, to reopen with a fresh code. */
+  onCodeTaken?: () => void;
 
   sendStart(msg: Omit<StartMsg, 't'>): void {
     this.post({ t: 'start', ...msg });
@@ -265,7 +286,7 @@ export class GuestLink extends Link {
       this.bind(conn);
       conn.on('open', () => this.post({ t: 'hello', charId: this.charId }));
     });
-    this.peer.on('error', (e) => this.status('error', String((e as Error).message ?? e)));
+    this.peer.on('error', (e) => this.status('error', this.classify(e)));
   }
 
   sendInput(inp: PlayerInput): void {

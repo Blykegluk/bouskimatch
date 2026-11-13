@@ -3,7 +3,7 @@
 
 import { sfx, unlockAudio } from './audio';
 import { CHARACTERS } from './characters';
-import { GuestLink, HostLink, type NetStatus, type StartMsg, normaliseCode, randomCode } from './net';
+import { GuestLink, HostLink, type NetError, type NetStatus, type StartMsg, normaliseCode, randomCode } from './net';
 import type { Difficulty, MatchMode, TeamLineup } from './sim';
 
 export interface LobbyResult {
@@ -70,8 +70,21 @@ const STATUS_TEXT: Record<NetStatus, string> = {
   connecting: 'Connexion…',
   connected: 'Connecté !',
   closed: 'Connexion perdue.',
-  error: 'Impossible de se connecter.',
+  error: 'Ça n’a pas marché.',
 };
+
+/** Plain sentences a child can act on. */
+const ERROR_TEXT: Record<NetError, string> = {
+  'no-such-game': '😕 Pas de partie avec ce code. Vérifie les lettres !',
+  'code-taken': 'Ce code est pris, on en prend un autre…',
+  offline: '📡 Pas d’internet. Vérifie le wifi et réessaie.',
+  other: '😕 Ça n’a pas marché. Réessaie.',
+};
+
+function statusText(s: NetStatus, error?: NetError): string {
+  if (s === 'error') return ERROR_TEXT[error ?? 'other'];
+  return STATUS_TEXT[s];
+}
 
 export function openLobby(opts: LobbyOpts): () => void {
   if (!document.getElementById('bm-lobby-css')) {
@@ -177,13 +190,13 @@ export function openLobby(opts: LobbyOpts): () => void {
     row.append(share, back);
     card.append(row, el('div', 'bm-note', 'Ton copain ouvre le lien, ou tape le code dans « Rejoindre ».'));
 
-    link = new HostLink({
-      onStatus: (s, detail) => {
-        state.textContent = STATUS_TEXT[s] + (s === 'error' && detail ? ` (${detail})` : '');
-      },
+    const host = new HostLink({
+      onStatus: (s, error) => { state.textContent = statusText(s, error); },
       onHello: (charId) => { guestChar = charId; },
       onPeerLeft: () => { state.textContent = 'Ton copain est parti.'; },
     }, code);
+    host.onCodeTaken = () => { host.close(); startHost(mode); };
+    link = host;
 
     // Wait for the guest to say which character it wants, then kick off.
     const waitAndStart = () => {
@@ -247,8 +260,8 @@ export function openLobby(opts: LobbyOpts): () => void {
       input.disabled = true;
       state.textContent = STATUS_TEXT.connecting;
       link = new GuestLink({
-        onStatus: (s, detail) => {
-          state.textContent = STATUS_TEXT[s] + (s === 'error' && detail ? ` (${detail})` : '');
+        onStatus: (s, error) => {
+          state.textContent = statusText(s, error);
           if (s === 'error' || s === 'closed') { go.disabled = false; input.disabled = false; }
         },
         onStart: (msg) => {
