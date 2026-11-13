@@ -1,8 +1,9 @@
 import Phaser from 'phaser';
 import { sfx, unlockAudio } from './audio';
 import { CHARACTERS, characterById } from './characters';
+import { SnapshotBuffer, type GuestLink, type HostLink, type StartMsg } from './net';
 import {
-  BALL_R, CHARGE_MAX, DIFFS, F, MATCH_TIME, PLAYER_R, STEP,
+  BALL_R, CHARGE_MAX, DIFFS, F, MATCH_TIME, NO_INPUT, PLAYER_R, STEP,
   abilityFor, createState, playerRadius, step,
   type AbilityKind, type Difficulty, type GameState, type Player, type PlayerInput, type SimEvent, type TeamLineup,
 } from './sim';
@@ -41,6 +42,18 @@ export class MatchScene extends Phaser.Scene {
   private acc = 0;
   private charPick = 0;
   private difficulty: Difficulty = 'easy';
+  /** 'solo' plays alone; 'host' runs the match for both; 'guest' draws what the host sends. */
+  private role: 'solo' | 'host' | 'guest' = 'solo';
+  private link: HostLink | GuestLink | null = null;
+  private start: Omit<StartMsg, 't'> | null = null;
+  /** Which seat this screen belongs to. */
+  private seat = 0;
+  private snaps = new SnapshotBuffer();
+  private snapTick = 0;
+  private sentPhase: GameState['phase'] | null = null;
+  private remoteInput: PlayerInput = NO_INPUT;
+  private netText!: Phaser.GameObjects.Text;
+  private peerGone = false;
 
   private world!: Phaser.GameObjects.Container;
   private g!: Phaser.GameObjects.Graphics;
@@ -67,19 +80,39 @@ export class MatchScene extends Phaser.Scene {
     super('match');
   }
 
-  init(data: { charPick?: number; difficulty?: Difficulty }): void {
+  init(data: {
+    charPick?: number; difficulty?: Difficulty;
+    role?: 'solo' | 'host' | 'guest'; link?: HostLink | GuestLink; start?: Omit<StartMsg, 't'>;
+  }): void {
     this.charPick = data.charPick ?? 0;
     this.difficulty = data.difficulty ?? 'easy';
+    this.role = data.role ?? 'solo';
+    this.link = data.link ?? null;
+    this.start = data.start ?? null;
+    this.seat = this.role === 'guest' ? 1 : 0;
+    this.snaps = new SnapshotBuffer();
+    this.snapTick = 0;
+    this.sentPhase = null;
+    this.remoteInput = NO_INPUT;
+    this.peerGone = false;
   }
 
   create(): void {
-    // Lineups: the chosen character leads your team, the rest are shared out.
-    const mine = CHARACTERS[this.charPick % CHARACTERS.length];
-    const rest = CHARACTERS.filter((c) => c.id !== mine.id);
-    const pick = (i: number) => rest[i % rest.length];
-    const home: TeamLineup = { fwd: mine, def: pick(0), gk: pick(1) };
-    const away: TeamLineup = { fwd: pick(2), def: pick(3), gk: pick(4) };
-    this.state = createState(this.difficulty, home, away, Math.floor(Math.random() * 1e9));
+    if (this.start) {
+      // Both ends build exactly the same match from what the host decided.
+      const st = this.start;
+      this.state = createState(st.difficulty, st.home, st.away, st.seed, st.mode);
+      this.difficulty = st.difficulty;
+    } else {
+      // Lineups: the chosen character leads your team, the rest are shared out.
+      const mine = CHARACTERS[this.charPick % CHARACTERS.length];
+      const rest = CHARACTERS.filter((c) => c.id !== mine.id);
+      const pick = (i: number) => rest[i % rest.length];
+      const home: TeamLineup = { fwd: mine, def: pick(0), gk: pick(1) };
+      const away: TeamLineup = { fwd: pick(2), def: pick(3), gk: pick(4) };
+      this.state = createState(this.difficulty, home, away, Math.floor(Math.random() * 1e9));
+    }
+    this.bindLink();
     this.acc = 0;
     this.isTouch = window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
     this.keys.clear();
@@ -152,12 +185,77 @@ export class MatchScene extends Phaser.Scene {
     this.hint = this.add.text(0, 0, '', {
       fontFamily: FONT, fontSize: '19px', color: '#eaffea', stroke: '#0b3d1a', strokeThickness: 4,
     }).setOrigin(0.5);
+    this.netText = this.add.text(0, 0, '', {
+      fontFamily: FONT, fontSize: '22px', fontStyle: 'bold', color: '#ffd23f',
+      stroke: '#0b3d1a', strokeThickness: 5,
+    }).setOrigin(0.5).setVisible(false);
     this.endLayer = this.add.container(0, 0).setVisible(false);
+    this.events.once('shutdown', () => {
+      if (this.leaving) this.link?.close();
+    });
 
     this.setupInput();
     this.layout();
     this.refreshHud();
     (window as unknown as Record<string, unknown>).__bm = { scene: this, getState: () => this.state };
+  }
+
+  private leaving = false;
+
+  /** Listen to the other phone: its buttons if we are the host, its match if we are the guest. */
+  private bindLink(): void {
+    const link = this.link;
+    if (!link) return;
+    link.setHandlers({
+      onInput: (inp) => { this.remoteInput = inp; },
+      onSnapshot: (snap, events) => {
+        this.snaps.push(snap);
+        for (const e of events) this.onEvent(e);
+      },
+      onPeerLeft: () => this.onPeerLeft(),
+      // The host starting another match restarts this one too.
+      onStart: (msg) => this.scene.restart({ role: 'guest', link, start: msg }),
+    });
+  }
+
+  private onPeerLeft(): void {
+    if (this.peerGone) return;
+    this.peerGone = true;
+    this.netText.setText(this.role === 'host' ? 'Ton copain est parti — le jeu le remplace' : 'Partie terminée (déconnecté)').setVisible(true);
+    this.time.delayedCall(3500, () => this.netText.setVisible(false));
+    if (this.role === 'host') {
+      // The computer takes over the player who left.
+      this.state.seats = this.state.seats.slice(0, 1);
+      this.state.controlled = this.state.controlled.slice(0, 1);
+      this.role = 'solo';
+    } else if (this.state.phase !== 'over') {
+      this.time.delayedCall(1200, () => this.quitToMenu());
+    }
+  }
+
+  private replayMatch(): void {
+    if (this.role === 'host' && this.start && this.link) {
+      const start = { ...this.start, seed: Math.floor(Math.random() * 1e9) };
+      (this.link as HostLink).sendStart(start);
+      this.scene.restart({ role: 'host', link: this.link, start });
+      return;
+    }
+    this.scene.restart({ charPick: this.charPick, difficulty: this.difficulty });
+  }
+
+  private quitToMenu(): void {
+    this.leaving = true;
+    this.scene.start('menu');
+  }
+
+  /** The team this screen is playing for. */
+  private get myTeam(): 0 | 1 {
+    return this.state.seats[this.seat]?.team ?? 0;
+  }
+
+  /** The player this screen is driving. */
+  private get myPlayer(): number {
+    return this.state.controlled[this.seat] ?? this.state.controlled[0] ?? 0;
   }
 
   // ---------------------------------------------------------------- input
@@ -264,6 +362,7 @@ export class MatchScene extends Phaser.Scene {
     this.scoreText.setPosition(w / 2, 28);
     this.clockText.setPosition(w / 2, 66);
     this.bigText.setPosition(w / 2, h / 2 - 20);
+    this.netText.setPosition(w / 2, 148);
     this.abilityText.setPosition(w / 2, h / 2 + 120);
     // Kept in the bottom-right corner, clear of the goal mouth.
     const [shoot, slide, special] = this.buttons;
@@ -279,19 +378,73 @@ export class MatchScene extends Phaser.Scene {
     if (this.scale.width !== this.layoutW) this.layout();
 
     const s = this.state;
+    const input = this.readInput();
+
+    if (this.role === 'guest') {
+      (this.link as GuestLink | null)?.sendInput(input);
+      this.applyRemote();
+      this.draw();
+      return;
+    }
+
     if (s.phase !== 'over') {
       this.acc += Math.min(deltaMs / 1000, 0.1);
-      const input = this.readInput();
       const events: SimEvent[] = [];
+      const inputs = this.role === 'host' ? [input, this.remoteInput] : [input];
       while (this.acc >= STEP) {
         s.events = [];
-        step(s, input, STEP);
+        step(s, inputs, STEP);
         events.push(...s.events);
         this.acc -= STEP;
       }
       for (const e of events) this.onEvent(e);
+      // Publish the match about 30 times a second, and always on a kick-off,
+      // a goal or the final whistle so the other phone never misses one.
+      if (this.role === 'host') {
+        const changed = s.phase !== this.sentPhase;
+        if (++this.snapTick % 2 === 0 || changed || events.length > 0) {
+          (this.link as HostLink).sendSnapshot(s, events);
+          this.sentPhase = s.phase;
+        }
+      }
     }
     this.draw();
+  }
+
+  /** Draw the host's match, sliding between the last two updates so it stays smooth. */
+  private applyRemote(): void {
+    const sample = this.snaps.sample();
+    if (!sample) return;
+    const { a, b, k } = sample;
+    const s = this.state;
+    const mix = (x: number, y: number) => x + (y - x) * k;
+    // A big jump means a goal reset or a hiccup: snap instead of sliding across the pitch.
+    const far = (x: number, y: number) => Math.abs(y - x) > 260;
+
+    s.phase = b.phase;
+    s.phaseT = b.phaseT;
+    s.clock = b.clock;
+    s.score = [b.score[0], b.score[1]];
+    s.teams[0].meter = b.meters[0];
+    s.teams[1].meter = b.meters[1];
+    s.controlled = b.controlled.slice();
+    s.ball.x = far(a.ball.x, b.ball.x) ? b.ball.x : mix(a.ball.x, b.ball.x);
+    s.ball.y = far(a.ball.y, b.ball.y) ? b.ball.y : mix(a.ball.y, b.ball.y);
+    s.ball.spin = b.ball.spin;
+    s.ball.power = b.ball.power;
+    s.ball.owner = b.ball.owner;
+    s.pickups = b.pickups.map((p) => ({ x: p.x, y: p.y, born: 0, alive: true }));
+    b.players.forEach((np, i) => {
+      const p = s.players[i];
+      const op = a.players[i] ?? np;
+      if (!p) return;
+      p.x = far(op.x, np.x) ? np.x : mix(op.x, np.x);
+      p.y = far(op.y, np.y) ? np.y : mix(op.y, np.y);
+      p.fx = np.fx; p.fy = np.fy;
+      p.charge = np.charge; p.slideT = np.slideT; p.stunT = np.stunT;
+      p.turboT = np.turboT; p.giantT = np.giantT; p.superSlide = np.superSlide;
+    });
+    if (s.phase === 'over' && !this.endLayer.visible) this.showEnd();
   }
 
   private onEvent(e: SimEvent): void {
@@ -325,7 +478,7 @@ export class MatchScene extends Phaser.Scene {
         this.confetti.explode(18, e.x, e.y);
         break;
       case 'ready':
-        if (e.team === 0) sfx.ready();
+        if (e.team === this.myTeam) sfx.ready();
         break;
       case 'ability':
         this.onAbility(e.kind, e.team, e.x, e.y);
@@ -335,7 +488,7 @@ export class MatchScene extends Phaser.Scene {
         this.bigText.setVisible(false);
         break;
       case 'goal': {
-        const mine = e.team === 0;
+        const mine = e.team === this.myTeam;
         if (mine) sfx.goal(); else sfx.conceded();
         this.refreshHud();
         this.cameras.main.shake(260, 0.008);
@@ -344,7 +497,7 @@ export class MatchScene extends Phaser.Scene {
         break;
       }
       case 'end':
-        this.showEnd();
+        if (this.role !== 'guest') this.showEnd();
         break;
     }
   }
@@ -355,7 +508,7 @@ export class MatchScene extends Phaser.Scene {
     else if (kind === 'keeper') sfx.giant();
     else sfx.slide();
     this.flames.explode(26, x, y);
-    if (team === 0) {
+    if (team === this.myTeam) {
       this.cameras.main.shake(200, 0.006);
       this.abilityText.setText(ABILITY_NAME[kind]).setVisible(true).setAlpha(1).setScale(0.6);
       this.tweens.add({ targets: this.abilityText, scale: 1, duration: 260, ease: 'Back.easeOut' });
@@ -371,22 +524,29 @@ export class MatchScene extends Phaser.Scene {
     });
   }
 
+  private lastScore = '';
+
   private refreshHud(): void {
     const s = this.state;
     const mine = characterById(s.players[0].charId);
     const theirs = characterById(s.players[3].charId);
-    this.scoreText.setText(`${mine.face} ${s.score[0]}  –  ${s.score[1]} ${theirs.face}`);
+    const text = `${mine.face} ${s.score[0]}  –  ${s.score[1]} ${theirs.face}`;
+    if (text !== this.lastScore) {
+      this.lastScore = text;
+      this.scoreText.setText(text);
+    }
   }
 
   private showEnd(): void {
     const s = this.state;
     const w = this.scale.width;
     const h = this.scale.height;
-    const won = s.score[0] > s.score[1];
+    const mine = this.myTeam;
+    const won = s.score[mine] > s.score[1 - mine];
     const draw = s.score[0] === s.score[1];
     if (won) sfx.win(); else if (!draw) sfx.lose();
     if (won) {
-      this.confetti.explode(160, F.w / 2, 180);
+      this.confetti.explode(160, F.w / 2, 240);
       this.time.delayedCall(500, () => this.confetti.explode(140, F.w / 2 - 240, 220));
       this.time.delayedCall(950, () => this.confetti.explode(140, F.w / 2 + 240, 220));
     }
@@ -404,15 +564,19 @@ export class MatchScene extends Phaser.Scene {
       fontFamily: FONT, fontSize: '66px', fontStyle: 'bold', color: '#ffffff',
       stroke: '#0b3d1a', strokeThickness: 8,
     }).setOrigin(0.5);
-    const replay = bigButton(this, w / 2 - 150, h / 2 + 68, {
-      w: 260, h: 84, label: '↻  Rejouer', color: 0x2f7bff, fontSize: 34,
-      onClick: () => this.scene.restart({ charPick: this.charPick, difficulty: this.difficulty }),
-    });
-    const menu = bigButton(this, w / 2 + 150, h / 2 + 68, {
+    const parts: Phaser.GameObjects.GameObject[] = [panel, title, score];
+    // Only the host can start another match; the guest just follows.
+    if (this.role !== 'guest') {
+      parts.push(bigButton(this, w / 2 - 150, h / 2 + 68, {
+        w: 260, h: 84, label: '↻  Rejouer', color: 0x2f7bff, fontSize: 34,
+        onClick: () => this.replayMatch(),
+      }));
+    }
+    parts.push(bigButton(this, w / 2 + (this.role === 'guest' ? 0 : 150), h / 2 + 68, {
       w: 260, h: 84, label: '☰  Menu', color: 0x4ec76a, fontSize: 34,
-      onClick: () => this.scene.start('menu'),
-    });
-    this.endLayer.add([panel, title, score, replay, menu]);
+      onClick: () => this.quitToMenu(),
+    }));
+    this.endLayer.add(parts);
     this.endLayer.setVisible(true);
   }
 
@@ -456,17 +620,26 @@ export class MatchScene extends Phaser.Scene {
     const r = playerRadius(p);
     const px = -p.fy;
     const py = p.fx;
-    const controlled = i === this.state.controlled;
+    const seat = this.state.controlled.indexOf(i);
+    const controlled = seat === this.seat;
+    const otherHuman = seat >= 0 && seat !== this.seat;
 
     g.fillStyle(0x000000, 0.25).fillEllipse(p.x + 4, p.y + 9, r * 2.2, r * 1.6);
 
     if (p.turboT > 0 && Math.random() < 0.8) this.flames.emitParticleAt(p.x - p.fx * r, p.y - p.fy * r, 1);
     if (p.slideT > 0 && Math.random() < 0.6) this.dust.emitParticleAt(p.x, p.y + 8, 1);
 
-    if (controlled && this.state.phase !== 'over') {
-      g.lineStyle(5, 0xffe14d, 0.95).strokeCircle(p.x, p.y, r + 15);
-      g.fillStyle(0xffe14d, 0.95);
-      g.fillTriangle(p.x - 13, p.y - r - 30, p.x + 13, p.y - r - 30, p.x, p.y - r - 13);
+    if (this.state.phase !== 'over') {
+      if (controlled) {
+        g.lineStyle(5, 0xffe14d, 0.95).strokeCircle(p.x, p.y, r + 15);
+        g.fillStyle(0xffe14d, 0.95);
+        g.fillTriangle(p.x - 13, p.y - r - 30, p.x + 13, p.y - r - 30, p.x, p.y - r - 13);
+      } else if (otherHuman) {
+        // The other child's player, so nobody chases the same one by mistake.
+        g.lineStyle(5, 0x58d6ff, 0.9).strokeCircle(p.x, p.y, r + 15);
+        g.fillStyle(0x58d6ff, 0.9);
+        g.fillCircle(p.x, p.y - r - 22, 7);
+      }
     }
 
     if (p.charge >= 0) {
@@ -519,12 +692,13 @@ export class MatchScene extends Phaser.Scene {
     const h = this.scale.height;
     ui.clear();
 
+    this.refreshHud();
     const secs = Math.ceil(s.clock);
     this.clockText.setText(`${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`);
     this.clockText.setColor(secs <= 15 ? '#ffd23f' : '#eaffea');
 
     // Super gauge.
-    const meter = s.teams[0].meter;
+    const meter = s.teams[this.myTeam].meter;
     const bw = 300;
     const bx = w / 2 - bw / 2;
     const by = 94;
@@ -558,7 +732,7 @@ export class MatchScene extends Phaser.Scene {
     }
 
     if (!this.isTouch) return;
-    const ready = s.teams[0].meter >= 1;
+    const ready = s.teams[this.myTeam].meter >= 1;
     for (const b of this.buttons) {
       const held = this.touchHeld(b.role);
       const isSuper = b.role === 'special';
@@ -567,7 +741,7 @@ export class MatchScene extends Phaser.Scene {
       ui.fillStyle(b.color, alpha).fillCircle(b.x, b.y, r);
       ui.lineStyle(5, 0xffffff, isSuper && !ready ? 0.4 : 0.85).strokeCircle(b.x, b.y, r);
       if (isSuper) {
-        b.icon.setText(ABILITY_ICON[abilityFor(s, s.controlled)]);
+        b.icon.setText(ABILITY_ICON[abilityFor(s, this.myPlayer)]);
         b.icon.setAlpha(ready ? 1 : 0.4);
         if (ready) {
           const pulse = 0.5 + Math.sin(this.time.now / 110) * 0.5;
@@ -578,8 +752,8 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private drawKeyboardHint(w: number, h: number): void {
-    const ready = this.state.teams[0].meter >= 1;
-    const kind = abilityFor(this.state, this.state.controlled);
+    const ready = this.state.teams[this.myTeam].meter >= 1;
+    const kind = abilityFor(this.state, this.myPlayer);
     this.hint
       .setText(`Flèches : bouger   ·   Espace : tirer (tap = passe)   ·   Maj : tacle   ·   E : ${ABILITY_ICON[kind]} ${ready ? 'prêt !' : '…'}`)
       .setPosition(w / 2, h - 22);

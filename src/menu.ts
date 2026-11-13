@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { sfx, unlockAudio } from './audio';
 import { CHARACTERS } from './characters';
+import { openLobby } from './lobby';
 import type { Difficulty } from './sim';
 import { FONT, bigButton } from './ui';
 
@@ -91,20 +92,49 @@ export class MenuScene extends Phaser.Scene {
       });
     });
 
-    bigButton(this, w / 2, 586, {
-      w: 320, h: 92, label: '▶  JOUER', color: 0x2f7bff, fontSize: 42,
+    bigButton(this, w / 2 - 190, 586, {
+      w: 320, h: 92, label: '▶  JOUER SEUL', color: 0x2f7bff, fontSize: 34,
       onClick: () => {
-        this.registry.set('charPick', this.charPick);
-        this.registry.set('diffPick', this.diffPick);
+        this.remember();
         this.scene.start('match', { charPick: this.charPick, difficulty: this.diffPick });
       },
     });
+    bigButton(this, w / 2 + 190, 586, {
+      w: 320, h: 92, label: '👬  JOUER À DEUX', color: 0xe2a32a, fontSize: 34,
+      onClick: () => this.openOnline(),
+    });
 
-    this.add.text(w / 2, h - 26, 'Téléphone : joystick à gauche, boutons à droite  ·  Ordinateur : flèches, Espace, Maj, E', {
+    this.add.text(w / 2, h - 26, 'À deux : chacun son téléphone, avec un code de partie  ·  Ordinateur : flèches, Espace, Maj, E', {
       fontFamily: FONT, fontSize: '18px', color: '#cfe9cf', stroke: '#0b3d1a', strokeThickness: 3,
     }).setOrigin(0.5);
 
     this.drawMarks();
+
+    // A shared link (…?p=CODE) opens the join screen straight away.
+    if (new URLSearchParams(location.search).get('p')) this.openOnline();
+  }
+
+  private remember(): void {
+    this.registry.set('charPick', this.charPick);
+    this.registry.set('diffPick', this.diffPick);
+  }
+
+  private openOnline(): void {
+    this.remember();
+    this.scene.pause();
+    openLobby({
+      charId: CHARACTERS[this.charPick].id,
+      difficulty: this.diffPick,
+      onCancel: () => {
+        history.replaceState(null, '', location.pathname);
+        this.scene.resume();
+      },
+      onPlay: ({ role, link, start }) => {
+        history.replaceState(null, '', location.pathname);
+        this.scene.resume();
+        this.scene.start('match', { role, link, start, charPick: this.charPick, difficulty: start.difficulty });
+      },
+    });
   }
 
   private drawMarks(): void {

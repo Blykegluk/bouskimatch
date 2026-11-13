@@ -4,10 +4,20 @@ Petit jeu de foot rigolo pour enfants (6-12 ans), jouable dans le navigateur sur
 
 ## Où on en est
 
-Étape 2 sur 5 : vrai match 3 contre 3 de 2 minutes, avec menu, choix du personnage, trois difficultés,
-coéquipiers et adversaires gérés par le jeu, passes, quatre aptitudes et écran de fin.
+Étape 3 sur 5 : jeu à deux en ligne, chacun sur son téléphone, avec un code de partie à 4 lettres
+ou un lien à envoyer. Deux modes : ensemble contre l'ordinateur, ou l'un contre l'autre.
 
-Étapes suivantes : jeu à deux en ligne avec un code de partie, personnages et rendu soignés, mise en ligne finale.
+Étapes suivantes : personnages et rendu soignés, mise en ligne finale.
+
+## Jouer à deux
+
+Un enfant touche « Jouer à deux », puis « Créer une partie » : il obtient un code de 4 lettres et un
+lien à envoyer. L'autre ouvre le lien, ou tape le code dans « Rejoindre », et le match démarre.
+
+Les deux téléphones se parlent directement (WebRTC, via le serveur d'annuaire gratuit de PeerJS) :
+aucun compte, aucun serveur à nous, aucune donnée gardée. Le téléphone qui a créé la partie fait
+l'arbitre : il calcule tout le match et envoie l'image aux deux. Si un joueur se déconnecte,
+l'ordinateur reprend son personnage et le match continue.
 
 ## Commandes
 

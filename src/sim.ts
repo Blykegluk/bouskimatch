@@ -59,6 +59,20 @@ const PICKUP_R = 20;
 
 export type AbilityKind = 'cannon' | 'tackle' | 'turbo' | 'keeper';
 export type Difficulty = 'easy' | 'normal' | 'champion';
+/** solo: one child vs the computer. coop: two children, same team. versus: one against the other. */
+export type MatchMode = 'solo' | 'coop' | 'versus';
+
+/** One human player: which team they are on and which player they start on. */
+export interface Seat {
+  team: 0 | 1;
+  idx: number;
+}
+
+export function seatsFor(mode: MatchMode): Seat[] {
+  if (mode === 'coop') return [{ team: 0, idx: 0 }, { team: 0, idx: 1 }];
+  if (mode === 'versus') return [{ team: 0, idx: 0 }, { team: 1, idx: 3 }];
+  return [{ team: 0, idx: 0 }];
+}
 
 interface DiffCfg {
   speed: number;
@@ -167,8 +181,10 @@ export interface GameState {
   clock: number;
   time: number;
   difficulty: Difficulty;
-  /** Index of the team-0 player the human is driving. */
-  controlled: number;
+  mode: MatchMode;
+  seats: Seat[];
+  /** Player index each seat is driving, one per seat. */
+  controlled: number[];
   /** Which team restarts after the current goal. */
   nextKickoff: 0 | 1;
   events: SimEvent[];
@@ -176,7 +192,6 @@ export interface GameState {
 }
 
 // Indices: 0,1 team 0 field - 2 team 0 keeper - 3,4 team 1 field - 5 team 1 keeper.
-export const HUMAN_TEAM = 0;
 
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
@@ -212,7 +227,10 @@ function makePlayer(team: 0 | 1, role: 'fwd' | 'def' | 'gk', char: CharStats): P
   };
 }
 
-export function createState(difficulty: Difficulty, home: TeamLineup, away: TeamLineup, seed = 12345): GameState {
+export function createState(
+  difficulty: Difficulty, home: TeamLineup, away: TeamLineup, seed = 12345, mode: MatchMode = 'solo',
+): GameState {
+  const seats = seatsFor(mode);
   const s: GameState = {
     players: [
       makePlayer(0, 'fwd', home.fwd), makePlayer(0, 'def', home.def), makePlayer(0, 'gk', home.gk),
@@ -227,7 +245,9 @@ export function createState(difficulty: Difficulty, home: TeamLineup, away: Team
     clock: MATCH_TIME,
     time: 0,
     difficulty,
-    controlled: 0,
+    mode,
+    seats,
+    controlled: seats.map((seat) => seat.idx),
     nextKickoff: 1,
     events: [],
     rng: makeRng(seed),
@@ -267,17 +287,20 @@ function kickoff(s: GameState, withBall: 0 | 1): void {
   s.ball = { x: F.w / 2, y: midY, vx: 0, vy: 0, owner: starter, spin: 0, power: 0, lastTouch: withBall };
   s.phase = 'kickoff';
   s.phaseT = KICKOFF_PAUSE;
-  s.controlled = s.players.findIndex((p) => p.team === HUMAN_TEAM && p.role === 'fwd');
+  s.controlled = s.seats.map((seat) => seat.idx);
 }
 
-function isControlled(s: GameState, p: Player): boolean {
-  return s.players[s.controlled] === p;
+/** True when a human, rather than the computer, is driving this player. */
+export function isControlled(s: GameState, p: Player): boolean {
+  return s.controlled.some((i) => s.players[i] === p);
 }
 
 function teamSpeed(s: GameState, p: Player): number {
   let v = MAX_SPEED * p.speedMul;
-  if (p.team === 1) v *= DIFFS[s.difficulty].speed;
-  else if (!isControlled(s, p)) v *= 0.93;
+  if (!isControlled(s, p)) {
+    if (p.team === 1) v *= DIFFS[s.difficulty].speed;
+    v *= 0.93;
+  }
   if (p.turboT > 0) v *= TURBO_MULT;
   return v;
 }
@@ -316,9 +339,9 @@ function aimAssist(p: Player, strength = 1): [number, number] {
   return [dx / d, dy / d];
 }
 
-/** The child gets the full aim help; the computer only a little. */
+/** A child gets the full aim help; the computer only a little. */
 function assistFor(s: GameState, p: Player): number {
-  if (p.team === HUMAN_TEAM) return 1;
+  if (isControlled(s, p)) return 1;
   return { easy: 0.3, normal: 0.55, champion: 0.8 }[s.difficulty];
 }
 
@@ -731,11 +754,11 @@ function homeSpot(s: GameState, p: Player): [number, number] {
   ];
 }
 
-function nearestTo(s: GameState, team: 0 | 1, x: number, y: number): number {
+function nearestTo(s: GameState, team: 0 | 1, x: number, y: number, taken?: Set<number>): number {
   let best = -1;
   let bd = Infinity;
   s.players.forEach((p, i) => {
-    if (p.team !== team || p.keeper) return;
+    if (p.team !== team || p.keeper || taken?.has(i)) return;
     const d = Math.hypot(p.x - x, p.y - y) + (p.stunT > 0 ? 400 : 0);
     if (d < bd) { bd = d; best = i; }
   });
@@ -814,20 +837,34 @@ function aiInput(s: GameState, idx: number, dt: number): PlayerInput {
   return inp;
 }
 
+/** Hand each human the team-mate who should be theirs right now. */
 function pickControlled(s: GameState): void {
   const b = s.ball;
-  const holder = b.owner >= 0 ? s.players[b.owner] : null;
-  if (holder && holder.team === HUMAN_TEAM) {
-    if (!holder.keeper) s.controlled = b.owner;
-    return;
-  }
-  const cur = s.players[s.controlled];
-  const near = nearestTo(s, HUMAN_TEAM, b.x, b.y);
-  if (near < 0 || near === s.controlled) return;
-  // Hysteresis: only switch when the other player is clearly closer.
-  const dCur = Math.hypot(cur.x - b.x, cur.y - b.y) + (cur.stunT > 0 ? 500 : 0);
-  const dNew = Math.hypot(s.players[near].x - b.x, s.players[near].y - b.y);
-  if (dNew < dCur - 60) s.controlled = near;
+  const taken = new Set<number>();
+  s.seats.forEach((seat, i) => {
+    const cur = s.controlled[i];
+    // Whoever has the ball keeps it.
+    if (b.owner >= 0 && !taken.has(b.owner)) {
+      const holder = s.players[b.owner];
+      if (holder.team === seat.team && !holder.keeper) {
+        s.controlled[i] = b.owner;
+        taken.add(b.owner);
+        return;
+      }
+    }
+    const near = nearestTo(s, seat.team, b.x, b.y, taken);
+    if (near < 0) { taken.add(cur); return; }
+    if (taken.has(cur)) {
+      s.controlled[i] = near;
+    } else if (near !== cur) {
+      // Hysteresis: only switch when the other player is clearly closer.
+      const curP = s.players[cur];
+      const dCur = Math.hypot(curP.x - b.x, curP.y - b.y) + (curP.stunT > 0 ? 500 : 0);
+      const dNew = Math.hypot(s.players[near].x - b.x, s.players[near].y - b.y);
+      if (dNew < dCur - 60) s.controlled[i] = near;
+    }
+    taken.add(s.controlled[i]);
+  });
 }
 
 function updatePickups(s: GameState): void {
@@ -858,8 +895,8 @@ function updatePickups(s: GameState): void {
   if (s.pickups.length > 8) s.pickups.splice(0, s.pickups.length - 8);
 }
 
-/** Advance the match by dt seconds. humanInput drives state.controlled. */
-export function step(s: GameState, humanInput: PlayerInput, dt: number): void {
+/** Advance the match by dt seconds. inputs[i] drives the player of seat i. */
+export function step(s: GameState, inputs: PlayerInput[], dt: number): void {
   const b = s.ball;
   if (s.phase === 'over') return;
   s.time += dt;
@@ -895,8 +932,9 @@ export function step(s: GameState, humanInput: PlayerInput, dt: number): void {
   pickControlled(s);
 
   s.players.forEach((p, i) => {
-    if (p.keeper) updateKeeper(s, i, dt);
-    else updateField(s, i, i === s.controlled ? humanInput : aiInput(s, i, dt), dt);
+    if (p.keeper) { updateKeeper(s, i, dt); return; }
+    const seat = s.controlled.indexOf(i);
+    updateField(s, i, seat >= 0 ? (inputs[seat] ?? NO_INPUT) : aiInput(s, i, dt), dt);
   });
 
   if (b.owner >= 0) {
