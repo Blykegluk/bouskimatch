@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { MenuScene } from './menu';
 import { MatchScene } from './scene';
 
 const HEIGHT = 720;
@@ -21,8 +22,11 @@ const game = new Phaser.Game({
     height: HEIGHT,
   },
   input: { activePointers: 4 },
-  scene: [MatchScene],
+  scene: [MenuScene, MatchScene],
 });
+
+// Handle used by the automated browser checks.
+(window as unknown as Record<string, unknown>).__game = game;
 
 const resize = () => game.scale.setGameSize(gameWidth(), HEIGHT);
 window.addEventListener('resize', resize);
