@@ -215,7 +215,7 @@ export class MatchScene extends Phaser.Scene {
     } catch {
       seen = false;
     }
-    if (!seen || this.registry.get('showHelp')) {
+    if ((!seen || this.registry.get('showHelp')) && this.role === 'solo') {
       this.registry.set('showHelp', false);
       this.time.delayedCall(60, () => this.openHelp());
     }
@@ -233,9 +233,13 @@ export class MatchScene extends Phaser.Scene {
     panel.fillStyle(0x000000, 0.55).fillRect(0, 0, w, h);
     panel.fillStyle(0x12612a, 0.97).fillRoundedRect(w / 2 - 260, h / 2 - 170, 520, 320, 26);
     panel.lineStyle(6, 0xffffff, 0.9).strokeRoundedRect(w / 2 - 260, h / 2 - 170, 520, 320, 26);
-    const title = this.add.text(w / 2, h / 2 - 118, 'Pause', {
+    const online = this.role !== 'solo';
+    const title = this.add.text(w / 2, h / 2 - (online ? 130 : 118), 'Pause', {
       fontFamily: FONT, fontSize: '48px', fontStyle: 'bold', color: '#ffe14d',
       stroke: '#0b3d1a', strokeThickness: 8,
+    }).setOrigin(0.5);
+    const note = this.add.text(w / 2, h / 2 - 92, online ? 'Le match continue pour ton copain !' : '', {
+      fontFamily: FONT, fontSize: '22px', color: '#ffffff', stroke: '#0b3d1a', strokeThickness: 4,
     }).setOrigin(0.5);
     const resume = bigButton(this, w / 2, h / 2 - 34, {
       w: 420, h: 78, label: '▶  Reprendre', color: 0x2f7bff, fontSize: 34,
@@ -253,7 +257,7 @@ export class MatchScene extends Phaser.Scene {
       w: 200, h: 78, label: '☰  Menu', color: 0x4ec76a, fontSize: 30,
       onClick: () => this.quitToMenu(),
     });
-    this.pauseLayer.add([panel, title, resume, sound, quit]);
+    this.pauseLayer.add([panel, title, note, resume, sound, quit]);
     this.refreshSoundLabel();
   }
 
