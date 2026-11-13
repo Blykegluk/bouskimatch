@@ -45,7 +45,34 @@ function noise(dur: number, vol: number, freq: number, delay = 0): void {
   src.start(t0);
 }
 
+/** A crowd is just filtered noise that swells and fades. */
+function crowd(dur: number, vol: number, freq: number, delay = 0): void {
+  if (!ctx || ctx.state !== 'running') return;
+  const t0 = ctx.currentTime + delay;
+  const n = Math.floor(ctx.sampleRate * dur);
+  const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) {
+    const k = i / n;
+    const env = Math.min(1, k * 6) * (1 - k) ** 1.4;
+    data[i] = (Math.random() * 2 - 1) * env;
+  }
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'bandpass';
+  filter.frequency.value = freq;
+  filter.Q.value = 0.7;
+  const gain = ctx.createGain();
+  gain.gain.value = vol;
+  src.connect(filter).connect(gain).connect(ctx.destination);
+  src.start(t0);
+}
+
 export const sfx = {
+  cheer(): void { crowd(2.2, 0.3, 900); crowd(1.8, 0.18, 1800, 0.1); },
+  groan(): void { crowd(1.4, 0.16, 420); },
+  ooh(): void { crowd(0.7, 0.1, 600); },
   kick(power: number): void { tone(170 + power * 90, 55, 0.13, 0.2 + power * 0.22, 'triangle'); },
   pass(): void { tone(430, 300, 0.09, 0.14, 'triangle'); },
   bounce(): void { tone(240, 120, 0.07, 0.12, 'sine'); },
@@ -59,6 +86,7 @@ export const sfx = {
   giant(): void { tone(120, 400, 0.4, 0.22, 'square'); },
   whistle(): void { tone(2100, 2300, 0.18, 0.1, 'sine'); tone(2300, 2100, 0.16, 0.1, 'sine', 0.19); },
   goal(): void { [523, 659, 784, 1047].forEach((f, i) => tone(f, f, 0.22, 0.2, 'square', i * 0.11)); },
+  whistleLong(): void { tone(2000, 2200, 0.5, 0.11, 'sine'); },
   conceded(): void { tone(300, 110, 0.5, 0.18, 'sawtooth'); },
   win(): void { [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, f, 0.3, 0.2, 'square', i * 0.13)); },
   lose(): void { [440, 392, 330, 262].forEach((f, i) => tone(f, f, 0.32, 0.18, 'triangle', i * 0.16)); },

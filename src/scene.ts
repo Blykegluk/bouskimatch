@@ -3,14 +3,15 @@ import { sfx, unlockAudio } from './audio';
 import { CHARACTERS, characterById } from './characters';
 import { SnapshotBuffer, type GuestLink, type HostLink, type StartMsg } from './net';
 import {
-  BALL_R, CHARGE_MAX, DIFFS, F, MATCH_TIME, NO_INPUT, PLAYER_R, STEP,
+  CHARGE_MAX, DIFFS, F, MATCH_TIME, NO_INPUT, PLAYER_R, STEP,
   abilityFor, createState, playerRadius, step,
   type AbilityKind, type Difficulty, type GameState, type Player, type PlayerInput, type SimEvent, type TeamLineup,
 } from './sim';
+import {
+  drawBall, drawCharacter, drawPickup, drawStadium, newAnim, stepAnim, type Anim,
+} from './render';
 import { FONT, bigButton } from './ui';
 
-const TEAM_TINT = [0x2f7bff, 0xff4d4d];
-const TEAM_DARK = [0x16307a, 0x8a1f1f];
 const JOY_R = 72;
 
 const ABILITY_ICON: Record<AbilityKind, string> = {
@@ -56,9 +57,13 @@ export class MatchScene extends Phaser.Scene {
   private peerGone = false;
 
   private world!: Phaser.GameObjects.Container;
+  private pitch!: Phaser.GameObjects.Graphics;
+  private pitchW = 0;
   private g!: Phaser.GameObjects.Graphics;
   private ui!: Phaser.GameObjects.Graphics;
-  private faces: Phaser.GameObjects.Text[] = [];
+  private charAnims: Anim[] = [];
+  /** Short-lived drawn effects: shockwaves and impact bursts. */
+  private fx: { x: number; y: number; age: number; life: number; kind: 'ring' | 'burst'; color: number; size: number }[] = [];
   private dust!: Phaser.GameObjects.Particles.ParticleEmitter;
   private flames!: Phaser.GameObjects.Particles.ParticleEmitter;
   private confetti!: Phaser.GameObjects.Particles.ParticleEmitter;
@@ -120,9 +125,14 @@ export class MatchScene extends Phaser.Scene {
     this.joy.active = false;
 
     this.world = this.add.container(0, 0);
-    const pitch = this.add.graphics();
-    drawPitch(pitch);
-    this.world.add(pitch);
+    this.pitch = this.add.graphics();
+    this.world.add(this.pitch);
+    this.fx = [];
+    this.charAnims = this.state.players.map(() => {
+      const a = newAnim();
+      return a;
+    });
+    this.state.players.forEach((p, i) => { this.charAnims[i].lastX = p.x; this.charAnims[i].lastY = p.y; });
 
     const tex = this.make.graphics({ x: 0, y: 0 }, false);
     tex.fillStyle(0xffffff);
@@ -144,10 +154,6 @@ export class MatchScene extends Phaser.Scene {
 
     this.g = this.add.graphics();
     this.world.add(this.g);
-
-    this.faces = this.state.players.map(() =>
-      this.add.text(0, 0, '', { fontFamily: FONT, fontSize: '30px' }).setOrigin(0.5));
-    this.world.add(this.faces);
 
     this.confetti = this.add.particles(0, 0, 'px', {
       speed: { min: 180, max: 640 }, angle: { min: 0, max: 360 }, gravityY: 520,
@@ -359,6 +365,11 @@ export class MatchScene extends Phaser.Scene {
     const h = this.scale.height;
     this.layoutW = w;
     this.world.x = (w - F.w) / 2;
+    if (this.pitchW !== w) {
+      this.pitchW = w;
+      this.pitch.clear();
+      drawStadium(this.pitch, w);
+    }
     this.scoreText.setPosition(w / 2, 28);
     this.clockText.setPosition(w / 2, 66);
     this.bigText.setPosition(w / 2, h / 2 - 20);
@@ -462,7 +473,9 @@ export class MatchScene extends Phaser.Scene {
         break;
       case 'save':
         sfx.save();
+        sfx.ooh();
         this.dust.explode(8, e.x, e.y);
+        this.fx.push({ x: e.x, y: e.y, age: 0, life: 0.4, kind: 'ring', color: 0xffffff, size: 90 });
         break;
       case 'slide':
         sfx.slide();
@@ -472,6 +485,7 @@ export class MatchScene extends Phaser.Scene {
         sfx.stun();
         this.dust.explode(14, e.x, e.y);
         this.cameras.main.shake(140, 0.005);
+        this.fx.push({ x: e.x, y: e.y, age: 0, life: 0.35, kind: 'burst', color: 0xffe14d, size: 60 });
         break;
       case 'pickup':
         sfx.pickup();
@@ -492,11 +506,25 @@ export class MatchScene extends Phaser.Scene {
         if (mine) sfx.goal(); else sfx.conceded();
         this.refreshHud();
         this.cameras.main.shake(260, 0.008);
-        if (mine) this.confetti.explode(110, e.x, e.y);
+        if (mine) {
+          this.confetti.explode(110, e.x, e.y);
+          sfx.cheer();
+        } else {
+          sfx.groan();
+        }
+        // A little zoom punch, and the scorers jump for joy.
+        const cam = this.cameras.main;
+        cam.zoomTo(1.07, 160, 'Sine.easeOut');
+        this.time.delayedCall(700, () => cam.zoomTo(1, 320, 'Sine.easeInOut'));
+        this.state.players.forEach((p, i) => {
+          if (p.team === e.team && !p.keeper) this.charAnims[i].celebrate = 2.4;
+        });
+        this.fx.push({ x: e.x, y: e.y, age: 0, life: 0.6, kind: 'ring', color: 0xffe14d, size: 240 });
         this.flash(mine ? 'BUT !' : 'Oups !', mine ? '#ffe14d' : '#ffffff');
         break;
       }
       case 'end':
+        sfx.whistleLong();
         if (this.role !== 'guest') this.showEnd();
         break;
     }
@@ -508,6 +536,10 @@ export class MatchScene extends Phaser.Scene {
     else if (kind === 'keeper') sfx.giant();
     else sfx.slide();
     this.flames.explode(26, x, y);
+    const colors: Record<AbilityKind, number> = {
+      cannon: 0xff9f1c, tackle: 0x58d6ff, turbo: 0xffe14d, keeper: 0xb05cff,
+    };
+    this.fx.push({ x, y, age: 0, life: 0.5, kind: 'ring', color: colors[kind], size: 180 });
     if (team === this.myTeam) {
       this.cameras.main.shake(200, 0.006);
       this.abilityText.setText(ABILITY_NAME[kind]).setVisible(true).setAlpha(1).setScale(0.6);
@@ -587,102 +619,57 @@ export class MatchScene extends Phaser.Scene {
     const s = this.state;
     g.clear();
 
+    const dt = Math.min(0.05, this.game.loop.delta / 1000);
+    s.players.forEach((p, i) => stepAnim(this.charAnims[i], p, dt));
+
+    // Shockwaves and bursts, drawn on the grass under everyone.
+    this.fx = this.fx.filter((f) => (f.age += dt) < f.life);
+    for (const f of this.fx) {
+      const k = f.age / f.life;
+      if (f.kind === 'ring') {
+        g.lineStyle(Math.max(2, 10 * (1 - k)), f.color, 0.85 * (1 - k));
+        g.strokeCircle(f.x, f.y, 10 + f.size * k);
+      } else {
+        g.lineStyle(Math.max(2, 6 * (1 - k)), f.color, 0.9 * (1 - k));
+        for (let i = 0; i < 6; i++) {
+          const ang = (i * Math.PI * 2) / 6 + k;
+          const r0 = 10 + f.size * k * 0.5;
+          const r1 = r0 + f.size * 0.35;
+          g.lineBetween(f.x + Math.cos(ang) * r0, f.y + Math.sin(ang) * r0,
+            f.x + Math.cos(ang) * r1, f.y + Math.sin(ang) * r1);
+        }
+      }
+    }
+
     for (const pk of s.pickups) {
       if (!pk.alive) continue;
-      const pulse = 1 + Math.sin(this.time.now / 140) * 0.12;
-      g.fillStyle(0x000000, 0.2).fillEllipse(pk.x + 3, pk.y + 8, 40, 20);
-      g.fillStyle(0xffe14d, 0.95).fillCircle(pk.x, pk.y, 20 * pulse);
-      g.lineStyle(4, 0xffffff, 0.9).strokeCircle(pk.x, pk.y, 20 * pulse);
-      g.fillStyle(0xffffff, 0.9).fillCircle(pk.x - 5, pk.y - 5, 4);
+      drawPickup(g, pk.x, pk.y, this.time.now);
     }
 
-    s.players.forEach((p, i) => this.drawPlayer(g, p, i));
+    // Draw from the back of the pitch forward, so nobody is hidden oddly.
+    [...s.players.keys()].sort((i, j) => s.players[i].y - s.players[j].y)
+      .forEach((i) => this.drawPlayer(g, s.players[i], i));
 
     const b = s.ball;
-    if (b.power > 0.3) {
-      this.flames.emitParticleAt(b.x, b.y, 2);
-      g.fillStyle(0xff9f1c, 0.5).fillCircle(b.x, b.y, BALL_R + 10);
-    }
-    g.fillStyle(0x000000, 0.25).fillEllipse(b.x + 3, b.y + 6, BALL_R * 2.1, BALL_R * 1.5);
-    g.fillStyle(0xffffff).fillCircle(b.x, b.y, BALL_R);
-    g.lineStyle(2, 0x222222).strokeCircle(b.x, b.y, BALL_R);
-    g.fillStyle(0x222222);
-    for (let i = 0; i < 3; i++) {
-      const a = b.spin + (i * Math.PI * 2) / 3;
-      g.fillCircle(b.x + Math.cos(a) * 5.5, b.y + Math.sin(a) * 5.5, 2.8);
-    }
+    if (b.power > 0.3) this.flames.emitParticleAt(b.x, b.y, 2);
+    drawBall(g, b.x, b.y, b.spin, b.power);
 
     this.drawHud();
   }
 
   private drawPlayer(g: Phaser.GameObjects.Graphics, p: Player, i: number): void {
-    const char = characterById(p.charId);
-    const r = playerRadius(p);
-    const px = -p.fy;
-    const py = p.fx;
     const seat = this.state.controlled.indexOf(i);
-    const controlled = seat === this.seat;
-    const otherHuman = seat >= 0 && seat !== this.seat;
-
-    g.fillStyle(0x000000, 0.25).fillEllipse(p.x + 4, p.y + 9, r * 2.2, r * 1.6);
-
-    if (p.turboT > 0 && Math.random() < 0.8) this.flames.emitParticleAt(p.x - p.fx * r, p.y - p.fy * r, 1);
-    if (p.slideT > 0 && Math.random() < 0.6) this.dust.emitParticleAt(p.x, p.y + 8, 1);
-
-    if (this.state.phase !== 'over') {
-      if (controlled) {
-        g.lineStyle(5, 0xffe14d, 0.95).strokeCircle(p.x, p.y, r + 15);
-        g.fillStyle(0xffe14d, 0.95);
-        g.fillTriangle(p.x - 13, p.y - r - 30, p.x + 13, p.y - r - 30, p.x, p.y - r - 13);
-      } else if (otherHuman) {
-        // The other child's player, so nobody chases the same one by mistake.
-        g.lineStyle(5, 0x58d6ff, 0.9).strokeCircle(p.x, p.y, r + 15);
-        g.fillStyle(0x58d6ff, 0.9);
-        g.fillCircle(p.x, p.y - r - 22, 7);
-      }
-    }
-
-    if (p.charge >= 0) {
-      const t = Math.min(1, p.charge / CHARGE_MAX);
-      const col = Phaser.Display.Color.Interpolate.ColorWithColor(
-        new Phaser.Display.Color(255, 230, 60), new Phaser.Display.Color(255, 60, 40), 100, t * 100);
-      g.lineStyle(7, Phaser.Display.Color.GetColor(col.r, col.g, col.b), 0.95);
-      g.beginPath();
-      g.arc(p.x, p.y, r + 22, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * t);
-      g.strokePath();
-    }
-
-    // A thick team-coloured jersey ring so a child can tell the sides apart at a glance.
-    g.fillStyle(TEAM_TINT[p.team]);
-    if (p.slideT > 0) {
-      g.fillEllipse(p.x, p.y, (r + 7) * (2 + Math.abs(p.fx) * 0.5), (r + 7) * (2 + Math.abs(p.fy) * 0.5));
-    } else {
-      g.fillCircle(p.x, p.y, r + 7);
-    }
-    g.lineStyle(3, TEAM_DARK[p.team], 1).strokeCircle(p.x, p.y, r + 7);
-    g.fillStyle(char.body).fillCircle(p.x, p.y, r);
-    g.lineStyle(3, char.trim).strokeCircle(p.x, p.y, r);
-    if (p.keeper) {
-      g.lineStyle(4, 0xffe14d, 0.95).strokeCircle(p.x, p.y, r + 11);
-    }
-
-    const face = this.faces[i];
-    face.setPosition(p.x + p.fx * 3, p.y + p.fy * 3 - 1);
-    face.setFontSize(Math.round(r * 1.35));
-    face.setText(p.stunT > 0 ? '😵' : char.face);
-    face.setAngle(p.stunT > 0 ? (this.time.now / 3) % 360 : 0);
-    face.setVisible(true);
-
-    if (p.stunT > 0) {
-      g.fillStyle(0xffe14d, 0.95);
-      for (let k = 0; k < 3; k++) {
-        const a = this.time.now / 180 + (k * Math.PI * 2) / 3;
-        g.fillCircle(p.x + Math.cos(a) * (r + 14), p.y - r - 8 + Math.sin(a) * 6, 4.5);
-      }
-    } else {
-      // Eyes looking where the player faces, behind the emoji for depth.
-      void px; void py;
-    }
+    const anim = this.charAnims[i];
+    if (p.turboT > 0 && Math.random() < 0.8) this.flames.emitParticleAt(p.x - p.fx * 24, p.y - p.fy * 24, 1);
+    if (p.slideT > 0 && Math.random() < 0.7) this.dust.emitParticleAt(p.x, p.y + 8, 1);
+    drawCharacter(g, p, characterById(p.charId), {
+      radius: playerRadius(p),
+      controlled: seat === this.seat,
+      otherHuman: seat >= 0 && seat !== this.seat,
+      anim,
+      timeMs: this.time.now,
+      charging: p.charge >= 0 ? p.charge / CHARGE_MAX : -1,
+    });
   }
 
   private drawHud(): void {
@@ -757,44 +744,6 @@ export class MatchScene extends Phaser.Scene {
     this.hint
       .setText(`Flèches : bouger   ·   Espace : tirer (tap = passe)   ·   Maj : tacle   ·   E : ${ABILITY_ICON[kind]} ${ready ? 'prêt !' : '…'}`)
       .setPosition(w / 2, h - 22);
-  }
-}
-
-function drawPitch(g: Phaser.GameObjects.Graphics): void {
-  const { left, right, top, bottom, goalTop, goalBottom, goalDepth } = F;
-  const midX = (left + right) / 2;
-  const midY = (top + bottom) / 2;
-
-  g.fillStyle(0x1f7a35).fillRect(-500, -200, F.w + 1000, F.h + 400);
-
-  const stripes = 10;
-  const sw = (right - left) / stripes;
-  for (let i = 0; i < stripes; i++) {
-    g.fillStyle(i % 2 === 0 ? 0x3fae52 : 0x37a04a).fillRect(left + i * sw, top, sw, bottom - top);
-  }
-
-  g.lineStyle(5, 0xffffff, 0.9);
-  g.strokeRect(left, top, right - left, bottom - top);
-  g.lineBetween(midX, top, midX, bottom);
-  g.strokeCircle(midX, midY, 85);
-  g.fillStyle(0xffffff, 0.9).fillCircle(midX, midY, 7);
-  for (const side of [-1, 1]) {
-    const gx = side < 0 ? left : right;
-    g.strokeRect(side < 0 ? gx : gx - 160, midY - 175, 160, 350);
-    g.strokeRect(side < 0 ? gx : gx - 60, midY - 102, 60, 204);
-
-    const nx = side < 0 ? gx - goalDepth : gx;
-    g.fillStyle(0xffffff, 0.18).fillRect(nx, goalTop, goalDepth, goalBottom - goalTop);
-    g.lineStyle(1.5, 0xffffff, 0.45);
-    for (let x = nx; x <= nx + goalDepth + 0.1; x += goalDepth / 4) g.lineBetween(x, goalTop, x, goalBottom);
-    for (let y = goalTop; y <= goalBottom + 0.1; y += 16) g.lineBetween(nx, y, nx + goalDepth, y);
-    g.lineStyle(7, 0xffffff, 1);
-    const back = side < 0 ? gx - goalDepth : gx + goalDepth;
-    g.lineBetween(gx, goalTop, back, goalTop);
-    g.lineBetween(back, goalTop, back, goalBottom);
-    g.lineBetween(back, goalBottom, gx, goalBottom);
-    g.fillStyle(0xffffff).fillCircle(gx, goalTop, 8).fillCircle(gx, goalBottom, 8);
-    g.lineStyle(5, 0xffffff, 0.9);
   }
 }
 

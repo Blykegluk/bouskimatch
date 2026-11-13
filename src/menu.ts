@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { sfx, unlockAudio } from './audio';
 import { CHARACTERS } from './characters';
 import { openLobby } from './lobby';
+import { drawCharacter, newAnim, previewPlayer, stepAnim } from './render';
 import type { Difficulty } from './sim';
 import { FONT, bigButton } from './ui';
 
@@ -12,6 +13,8 @@ const DIFF_LABELS: { key: Difficulty; label: string; color: number }[] = [
 ];
 
 export class MenuScene extends Phaser.Scene {
+  private portraits!: Phaser.GameObjects.Graphics;
+  private portraitAnims: ReturnType<typeof newAnim>[] = [];
   private charPick = 0;
   private diffPick: Difficulty = 'easy';
   private charMarks: Phaser.GameObjects.Graphics[] = [];
@@ -53,20 +56,18 @@ export class MenuScene extends Phaser.Scene {
     const n = CHARACTERS.length;
     const gap = 128;
     const x0 = w / 2 - ((n - 1) * gap) / 2;
+    // The real characters, drawn the same way as on the pitch.
+    this.portraits = this.add.graphics();
+    this.portraitAnims = CHARACTERS.map(() => newAnim());
     CHARACTERS.forEach((c, i) => {
       const x = x0 + i * gap;
       const y = 282;
       const mark = this.add.graphics();
       this.charMarks.push(mark);
-      const body = this.add.graphics();
-      body.fillStyle(0x000000, 0.25).fillCircle(x + 3, y + 6, 44);
-      body.fillStyle(c.body).fillCircle(x, y, 44);
-      body.lineStyle(4, c.trim).strokeCircle(x, y, 44);
-      this.add.text(x, y - 2, c.face, { fontFamily: FONT, fontSize: '46px' }).setOrigin(0.5);
-      this.add.text(x, y + 62, c.name, {
+      this.add.text(x, y + 70, c.name, {
         fontFamily: FONT, fontSize: '20px', color: '#ffffff', stroke: '#0b3d1a', strokeThickness: 4,
       }).setOrigin(0.5);
-      const zone = this.add.zone(x, y + 10, 118, 130).setInteractive({ useHandCursor: true });
+      const zone = this.add.zone(x, y, 118, 120).setInteractive({ useHandCursor: true });
       zone.on('pointerup', () => {
         unlockAudio();
         sfx.click();
@@ -137,6 +138,33 @@ export class MenuScene extends Phaser.Scene {
     });
   }
 
+  update(_t: number, deltaMs: number): void {
+    const dt = Math.min(0.05, deltaMs / 1000);
+    const w = this.scale.width;
+    const gap = 128;
+    const x0 = w / 2 - ((CHARACTERS.length - 1) * gap) / 2;
+    this.portraits.clear();
+    CHARACTERS.forEach((c, i) => {
+      const chosen = i === this.charPick;
+      const p = previewPlayer(c.id, x0 + i * gap, 282 - (chosen ? 4 : 0));
+      const anim = this.portraitAnims[i];
+      anim.lastX = p.x;
+      anim.lastY = p.y;
+      // The chosen one bounces on the spot; the others just blink.
+      if (chosen) anim.celebrate = 1;
+      stepAnim(anim, p, dt);
+      drawCharacter(this.portraits, p, c, {
+        radius: chosen ? 38 : 33,
+        controlled: false,
+        otherHuman: false,
+        anim,
+        timeMs: this.time.now,
+        charging: -1,
+        jersey: false,
+      });
+    });
+  }
+
   private drawMarks(): void {
     const w = this.scale.width;
     const n = CHARACTERS.length;
@@ -145,7 +173,7 @@ export class MenuScene extends Phaser.Scene {
     this.charMarks.forEach((g, i) => {
       g.clear();
       if (i !== this.charPick) return;
-      g.lineStyle(7, 0xffe14d, 1).strokeCircle(x0 + i * gap, 282, 54);
+      g.lineStyle(7, 0xffe14d, 1).strokeCircle(x0 + i * gap, 282, 62);
     });
     this.diffMarks.forEach((g, i) => {
       g.clear();

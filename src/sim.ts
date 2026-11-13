@@ -15,7 +15,7 @@ export const F = {
 };
 
 export const BALL_R = 11;
-export const PLAYER_R = 22;
+export const PLAYER_R = 26;
 export const CHARGE_MAX = 0.6;
 export const STEP = 1 / 60;
 export const MATCH_TIME = 120;

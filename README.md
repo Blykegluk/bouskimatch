@@ -4,10 +4,22 @@ Petit jeu de foot rigolo pour enfants (6-12 ans), jouable dans le navigateur sur
 
 ## Où on en est
 
-Étape 3 sur 5 : jeu à deux en ligne, chacun sur son téléphone, avec un code de partie à 4 lettres
-ou un lien à envoyer. Deux modes : ensemble contre l'ordinateur, ou l'un contre l'autre.
+Étape 4 sur 5 : six personnages dessinés et animés, stade avec public et panneaux, effets
+d'aptitudes, célébrations de but et sons de foule.
 
-Étapes suivantes : personnages et rendu soignés, mise en ligne finale.
+Étape suivante : mise en ligne finale (test par les enfants, corrections).
+
+## Les personnages
+
+Chaque personnage est entièrement dessiné par le code, à partir de la fiche dans
+`src/characters.ts` : couleur, oreilles (chat, antenne, cornes, grenouille, tentacules, crête),
+yeux, motif, et deux petits réglages de vitesse et de puissance. Ajouter un personnage, c'est
+ajouter une ligne : aucune image à télécharger, et le dessin reste net à toutes les tailles —
+le gardien géant est le même dessin, en plus gros.
+
+Ils courent (les pieds bougent), clignent des yeux, ouvrent la bouche en sprintant, tournent
+la tête vers là où ils vont, voient trente-six chandelles quand ils sont renversés et sautent
+de joie après un but.
 
 ## Jouer à deux
 
