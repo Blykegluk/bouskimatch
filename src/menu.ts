@@ -100,6 +100,14 @@ export class MenuScene extends Phaser.Scene {
         this.scene.start('match', { charPick: this.charPick, difficulty: this.diffPick });
       },
     });
+    bigButton(this, w - 70, 56, {
+      w: 76, h: 76, label: '?', color: 0x54705c, fontSize: 40,
+      onClick: () => {
+        this.remember();
+        this.registry.set('showHelp', true);
+        this.scene.start('match', { charPick: this.charPick, difficulty: this.diffPick });
+      },
+    });
     bigButton(this, w / 2 + 190, 586, {
       w: 320, h: 92, label: '👬  JOUER À DEUX', color: 0xe2a32a, fontSize: 34,
       onClick: () => this.openOnline(),

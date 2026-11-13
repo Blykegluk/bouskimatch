@@ -1,6 +1,25 @@
 // Tiny synthesized sound effects (placeholder until real sounds in the polish step).
 
 let ctx: AudioContext | null = null;
+let muted = false;
+try {
+  muted = localStorage.getItem('bm-muted') === '1';
+} catch {
+  // Private browsing: just start with sound on.
+}
+
+export function isMuted(): boolean {
+  return muted;
+}
+
+export function setMuted(v: boolean): void {
+  muted = v;
+  try {
+    localStorage.setItem('bm-muted', v ? '1' : '0');
+  } catch {
+    // Nothing to remember it with; the setting lasts for this session only.
+  }
+}
 
 /** Browsers only allow audio after a user gesture; call this from one. */
 export function unlockAudio(): void {
@@ -13,7 +32,7 @@ export function unlockAudio(): void {
 }
 
 function tone(freq: number, endFreq: number, dur: number, vol: number, type: OscillatorType, delay = 0): void {
-  if (!ctx || ctx.state !== 'running') return;
+  if (muted || !ctx || ctx.state !== 'running') return;
   const t0 = ctx.currentTime + delay;
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
@@ -28,7 +47,7 @@ function tone(freq: number, endFreq: number, dur: number, vol: number, type: Osc
 }
 
 function noise(dur: number, vol: number, freq: number, delay = 0): void {
-  if (!ctx || ctx.state !== 'running') return;
+  if (muted || !ctx || ctx.state !== 'running') return;
   const t0 = ctx.currentTime + delay;
   const n = Math.floor(ctx.sampleRate * dur);
   const buf = ctx.createBuffer(1, n, ctx.sampleRate);
@@ -47,7 +66,7 @@ function noise(dur: number, vol: number, freq: number, delay = 0): void {
 
 /** A crowd is just filtered noise that swells and fades. */
 function crowd(dur: number, vol: number, freq: number, delay = 0): void {
-  if (!ctx || ctx.state !== 'running') return;
+  if (muted || !ctx || ctx.state !== 'running') return;
   const t0 = ctx.currentTime + delay;
   const n = Math.floor(ctx.sampleRate * dur);
   const buf = ctx.createBuffer(1, n, ctx.sampleRate);

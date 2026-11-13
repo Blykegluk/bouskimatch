@@ -49,3 +49,11 @@ if (fsButton && document.fullscreenEnabled && window.matchMedia('(pointer: coars
 document.getElementById('rotate')?.addEventListener('click', goFullscreen);
 
 document.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// Locking the phone or switching app pauses a solo match, so the clock does not
+// run down while nobody is playing.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) return;
+  const match = game.scene.getScene('match') as Phaser.Scene & { pauseFromOutside?: () => void };
+  if (match?.scene.isActive()) match.pauseFromOutside?.();
+});

@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { sfx, unlockAudio } from './audio';
+import { isMuted, setMuted, sfx, unlockAudio } from './audio';
 import { CHARACTERS, characterById } from './characters';
 import { SnapshotBuffer, type GuestLink, type HostLink, type StartMsg } from './net';
 import {
@@ -10,7 +10,7 @@ import {
 import {
   drawBall, drawCharacter, drawPickup, drawStadium, newAnim, stepAnim, type Anim,
 } from './render';
-import { FONT, bigButton } from './ui';
+import { FONT, bigButton, setButtonLabel } from './ui';
 
 const JOY_R = 72;
 
@@ -54,6 +54,9 @@ export class MatchScene extends Phaser.Scene {
   private sentPhase: GameState['phase'] | null = null;
   private remoteInput: PlayerInput = NO_INPUT;
   private netText!: Phaser.GameObjects.Text;
+  private pauseLayer!: Phaser.GameObjects.Container;
+  private pauseBtn = { x: 0, y: 0, r: 30 };
+  private paused = false;
   private peerGone = false;
 
   private world!: Phaser.GameObjects.Container;
@@ -196,6 +199,9 @@ export class MatchScene extends Phaser.Scene {
       stroke: '#0b3d1a', strokeThickness: 5,
     }).setOrigin(0.5).setVisible(false);
     this.endLayer = this.add.container(0, 0).setVisible(false);
+    this.paused = false;
+    this.buildPauseMenu();
+    this.buildHelp();
     this.events.once('shutdown', () => {
       if (this.leaving) this.link?.close();
     });
@@ -203,10 +209,130 @@ export class MatchScene extends Phaser.Scene {
     this.setupInput();
     this.layout();
     this.refreshHud();
+    let seen = true;
+    try {
+      seen = localStorage.getItem('bm-seen-help') === '1';
+    } catch {
+      seen = false;
+    }
+    if (!seen || this.registry.get('showHelp')) {
+      this.registry.set('showHelp', false);
+      this.time.delayedCall(60, () => this.openHelp());
+    }
     (window as unknown as Record<string, unknown>).__bm = { scene: this, getState: () => this.state };
   }
 
   private leaving = false;
+
+  /** A way out of a match, and the sound switch, for a child alone with the game. */
+  private buildPauseMenu(): void {
+    const w = this.scale.width;
+    const h = this.scale.height;
+    this.pauseLayer = this.add.container(0, 0).setVisible(false).setDepth(50);
+    const panel = this.add.graphics();
+    panel.fillStyle(0x000000, 0.55).fillRect(0, 0, w, h);
+    panel.fillStyle(0x12612a, 0.97).fillRoundedRect(w / 2 - 260, h / 2 - 170, 520, 320, 26);
+    panel.lineStyle(6, 0xffffff, 0.9).strokeRoundedRect(w / 2 - 260, h / 2 - 170, 520, 320, 26);
+    const title = this.add.text(w / 2, h / 2 - 118, 'Pause', {
+      fontFamily: FONT, fontSize: '48px', fontStyle: 'bold', color: '#ffe14d',
+      stroke: '#0b3d1a', strokeThickness: 8,
+    }).setOrigin(0.5);
+    const resume = bigButton(this, w / 2, h / 2 - 34, {
+      w: 420, h: 78, label: '▶  Reprendre', color: 0x2f7bff, fontSize: 34,
+      onClick: () => this.setPaused(false),
+    });
+    const sound = bigButton(this, w / 2 - 110, h / 2 + 68, {
+      w: 200, h: 78, label: '', color: 0xe2a32a, fontSize: 30,
+      onClick: () => {
+        setMuted(!isMuted());
+        this.refreshSoundLabel();
+      },
+    });
+    this.soundBtn = sound;
+    const quit = bigButton(this, w / 2 + 110, h / 2 + 68, {
+      w: 200, h: 78, label: '☰  Menu', color: 0x4ec76a, fontSize: 30,
+      onClick: () => this.quitToMenu(),
+    });
+    this.pauseLayer.add([panel, title, resume, sound, quit]);
+    this.refreshSoundLabel();
+  }
+
+  private soundBtn?: Phaser.GameObjects.Container;
+  private helpLayer!: Phaser.GameObjects.Container;
+
+  /** Shown once, the first time a child plays: four pictures, almost no words. */
+  private buildHelp(): void {
+    const w = this.scale.width;
+    const h = this.scale.height;
+    this.helpLayer = this.add.container(0, 0).setVisible(false).setDepth(60);
+    const panel = this.add.graphics();
+    panel.fillStyle(0x000000, 0.6).fillRect(0, 0, w, h);
+    panel.fillStyle(0x12612a, 0.97).fillRoundedRect(w / 2 - 440, h / 2 - 220, 880, 420, 28);
+    panel.lineStyle(6, 0xffffff, 0.9).strokeRoundedRect(w / 2 - 440, h / 2 - 220, 880, 420, 28);
+    const items: Phaser.GameObjects.GameObject[] = [panel];
+    items.push(this.add.text(w / 2, h / 2 - 166, 'Comment jouer', {
+      fontFamily: FONT, fontSize: '44px', fontStyle: 'bold', color: '#ffe14d',
+      stroke: '#0b3d1a', strokeThickness: 8,
+    }).setOrigin(0.5));
+
+    const touch = this.isTouch;
+    const rows: [string, string][] = [
+      [touch ? '🕹️' : '⬅️➡️', 'Bouge ton joueur'],
+      ['⚽', 'Appui court : passe   ·   Appui long : tir puissant'],
+      ['💨', 'Tacle pour prendre le ballon'],
+      ['⚡', 'Super pouvoir quand la barre est pleine'],
+    ];
+    rows.forEach(([icon, text], i) => {
+      const y = h / 2 - 90 + i * 62;
+      items.push(this.add.text(w / 2 - 330, y, icon, { fontFamily: FONT, fontSize: '42px' }).setOrigin(0.5));
+      items.push(this.add.text(w / 2 - 280, y, text, {
+        fontFamily: FONT, fontSize: '28px', color: '#ffffff', stroke: '#0b3d1a', strokeThickness: 4,
+      }).setOrigin(0, 0.5));
+    });
+    items.push(bigButton(this, w / 2, h / 2 + 160, {
+      w: 340, h: 76, label: "▶  C'est parti !", color: 0x2f7bff, fontSize: 34,
+      onClick: () => this.closeHelp(),
+    }));
+    this.helpLayer.add(items);
+  }
+
+  private openHelp(): void {
+    this.helpLayer.setVisible(true);
+    this.setPaused(true);
+  }
+
+  private closeHelp(): void {
+    this.helpLayer.setVisible(false);
+    try {
+      localStorage.setItem('bm-seen-help', '1');
+    } catch {
+      // Nothing to remember it with; it will show again next time.
+    }
+    this.setPaused(false);
+  }
+
+  private refreshSoundLabel(): void {
+    if (this.soundBtn) setButtonLabel(this.soundBtn, isMuted() ? '🔇  Son' : '🔊  Son');
+  }
+
+  private setPaused(v: boolean): void {
+    if (this.state.phase === 'over') return;
+    this.paused = v;
+    this.pauseLayer.setVisible(v);
+    this.refreshSoundLabel();
+    if (v) {
+      this.keys.clear();
+      this.touches.clear();
+      this.joy.active = false;
+    } else {
+      this.acc = 0;
+    }
+  }
+
+  /** Called when the phone is locked or the player switches app. */
+  pauseFromOutside(): void {
+    if (this.role === 'solo' && !this.paused) this.setPaused(true);
+  }
 
   /** Listen to the other phone: its buttons if we are the host, its match if we are the guest. */
   private bindLink(): void {
@@ -271,6 +397,11 @@ export class MatchScene extends Phaser.Scene {
     this.input.keyboard?.removeAllListeners();
     const onDown = (e: KeyboardEvent) => {
       unlockAudio();
+      if (e.code === 'Escape' || e.code === 'KeyP') {
+        if (this.helpLayer.visible) this.closeHelp();
+        else this.setPaused(!this.paused);
+        return;
+      }
       this.keys.add(e.code);
       if (handled.includes(e.code)) e.preventDefault();
     };
@@ -289,6 +420,13 @@ export class MatchScene extends Phaser.Scene {
       unlockAudio();
       if (p.wasTouch) this.isTouch = true;
       if (this.state.phase === 'over') return;
+      if (this.helpLayer.visible) return;
+      if (Math.hypot(p.x - this.pauseBtn.x, p.y - this.pauseBtn.y) < this.pauseBtn.r + 10) {
+        sfx.click();
+        this.setPaused(!this.paused);
+        return;
+      }
+      if (this.paused) return;
       if (p.x < this.scale.width * 0.45) {
         if (this.joy.active) return;
         this.touches.set(p.id, 'joy');
@@ -374,6 +512,19 @@ export class MatchScene extends Phaser.Scene {
     this.clockText.setPosition(w / 2, 66);
     this.bigText.setPosition(w / 2, h / 2 - 20);
     this.netText.setPosition(w / 2, 148);
+    this.pauseBtn.x = 54;
+    this.pauseBtn.y = 48;
+    // Turning the phone changes the size, so these panels are rebuilt to fit.
+    if (this.pauseLayer) {
+      const wasPaused = this.pauseLayer.visible;
+      const wasHelp = this.helpLayer.visible;
+      this.pauseLayer.destroy(true);
+      this.helpLayer.destroy(true);
+      this.buildPauseMenu();
+      this.buildHelp();
+      this.pauseLayer.setVisible(wasPaused);
+      this.helpLayer.setVisible(wasHelp);
+    }
     this.abilityText.setPosition(w / 2, h / 2 + 120);
     // Kept in the bottom-right corner, clear of the goal mouth.
     const [shoot, slide, special] = this.buttons;
@@ -389,6 +540,10 @@ export class MatchScene extends Phaser.Scene {
     if (this.scale.width !== this.layoutW) this.layout();
 
     const s = this.state;
+    if (this.paused && this.role === 'solo') {
+      this.draw();
+      return;
+    }
     const input = this.readInput();
 
     if (this.role === 'guest') {
@@ -680,6 +835,16 @@ export class MatchScene extends Phaser.Scene {
     ui.clear();
 
     this.refreshHud();
+    // Pause button, top-left, clear of the joystick area.
+    const pb = this.pauseBtn;
+    pb.x = 54;
+    pb.y = 48;
+    ui.fillStyle(0x0b3d1a, 0.55).fillCircle(pb.x, pb.y, pb.r);
+    ui.lineStyle(4, 0xffffff, 0.8).strokeCircle(pb.x, pb.y, pb.r);
+    ui.fillStyle(0xffffff, 0.9);
+    ui.fillRect(pb.x - 10, pb.y - 12, 7, 24);
+    ui.fillRect(pb.x + 3, pb.y - 12, 7, 24);
+
     const secs = Math.ceil(s.clock);
     this.clockText.setText(`${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`);
     this.clockText.setColor(secs <= 15 ? '#ffd23f' : '#eaffea');
