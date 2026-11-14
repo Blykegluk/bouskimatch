@@ -62,7 +62,7 @@ export class MenuScene extends Phaser.Scene {
     this.drawProgress();
 
     // --- characters
-    this.add.text(w / 2, 158, 'Choisis ton perso', {
+    this.add.text(w / 2, 140, 'Choisis ton perso', {
       fontFamily: FONT, fontSize: '26px', fontStyle: 'bold', color: '#ffffff',
       stroke: '#0b3d1a', strokeThickness: 5,
     }).setOrigin(0.5);
