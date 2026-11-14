@@ -114,6 +114,13 @@ menu (stade, château fort, arc-en-ciel, plage), le même pour les deux joueurs 
 ligne. Buts élargis et gardien moins infaillible : en facile un enfant passe
 d'environ un but par match à trois.
 
+Deuxième passe le 14/11 : chaque personnage a sa silhouette (fin, costaud, tête
+carrée pour le robot), de l'ombre et de la lumière sur le maillot et la tête, des
+sourcils qui froncent quand on charge un tir, et il se penche dans sa course. Le
+ballon s'étire quand il file et laisse une traînée, les glissades laissent des
+traces sur l'herbe, le filet se déforme sur un but, et la pelouse a de la texture
+et des flaques de lumière. Coût mesuré : 3,5 ms par image au lieu de 3,2.
+
 ## 7. Les lots, dans l’ordre
 
 | Lot | Contenu | Ce que tu verras |

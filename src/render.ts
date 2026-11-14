@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import type { Character } from './characters';
+import type { Build, Character } from './characters';
 import { pitchById, type Pitch } from './pitches';
 import { BALL_R, F, type Player } from './sim';
 
@@ -50,6 +50,13 @@ interface DrawOpts {
 
 const BOOT = 0x2b2b33;
 
+/** Body shapes, so each character has its own silhouette. */
+const BUILD: Record<Build, { bw: number; bh: number; hr: number }> = {
+  slim: { bw: 1.36, bh: 1.32, hr: 0.95 },
+  normal: { bw: 1.62, bh: 1.4, hr: 0.9 },
+  big: { bw: 1.92, bh: 1.48, hr: 0.84 },
+};
+
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
@@ -78,11 +85,16 @@ export function drawCharacter(g: G, p: Player, c: Character, o: DrawOpts): void 
   const shirt = jersey ? TEAM_TINT[p.team] : c.trim;
   const shirtDark = jersey ? TEAM_DARK[p.team] : c.trim;
 
-  const bodyY = ground - r * 0.72 + low;
-  const headR = r * 0.9;
-  const headY = bodyY - r * 0.95 + low * 0.7;
-  const bw = r * 1.62;
-  const bh = r * 1.4;
+  const build = BUILD[c.build] ?? BUILD.normal;
+  // Running leans the body into the run a little.
+  const run = Math.min(1, a.speed / 320);
+  const leanX = p.fx * run * r * 0.1;
+  const leanY = p.fy * run * r * 0.05;
+  const bodyY = ground - r * 0.72 + low + leanY;
+  const headR = r * build.hr;
+  const headY = bodyY - r * 0.95 + low * 0.7 + leanY;
+  const bw = r * build.bw;
+  const bh = r * build.bh;
   const tilt = stunned ? Math.sin(o.timeMs / 110) * r * 0.12 : 0;
 
   // The shadow stays on the grass, under the feet, even during a jump.
@@ -113,26 +125,38 @@ export function drawCharacter(g: G, p: Player, c: Character, o: DrawOpts): void 
   }
 
   // --- shirt.
-  g.fillStyle(shirt, 1).fillRoundedRect(x - bw / 2 + tilt, bodyY - bh / 2, bw, bh, r * 0.42);
+  const sx0 = x - bw / 2 + tilt + leanX;
+  g.fillStyle(shirt, 1).fillRoundedRect(sx0, bodyY - bh / 2, bw, bh, r * 0.42);
+  // A little light from above and shade below, so it is not a flat slab.
+  g.fillStyle(0xffffff, 0.14).fillRoundedRect(sx0 + r * 0.1, bodyY - bh / 2 + r * 0.08, bw - r * 0.2, bh * 0.34, r * 0.3);
   g.lineStyle(Math.max(2, r * 0.09), shirtDark, 1)
-    .strokeRoundedRect(x - bw / 2 + tilt, bodyY - bh / 2, bw, bh, r * 0.42);
+    .strokeRoundedRect(sx0, bodyY - bh / 2, bw, bh, r * 0.42);
   if (jersey) {
     // Two stripes and a collar, so the two teams read at a glance.
     g.fillStyle(shirtDark, 0.55);
     for (const k of [-0.3, 0.16]) {
-      g.fillRect(x + k * bw + tilt, bodyY - bh / 2 + r * 0.14, bw * 0.14, bh - r * 0.28);
+      g.fillRect(x + k * bw + tilt + leanX, bodyY - bh / 2 + r * 0.14, bw * 0.14, bh - r * 0.28);
     }
-    g.fillStyle(0xffffff, 0.85).fillEllipse(x + tilt, bodyY - bh / 2 + r * 0.08, bw * 0.46, r * 0.26);
+    g.fillStyle(0xffffff, 0.85).fillEllipse(x + tilt + leanX, bodyY - bh / 2 + r * 0.08, bw * 0.46, r * 0.26);
   }
   if (p.keeper) {
     g.lineStyle(Math.max(2, r * 0.1), 0xffe14d, 0.95)
-      .strokeRoundedRect(x - bw / 2 + tilt, bodyY - bh / 2, bw, bh, r * 0.42);
+      .strokeRoundedRect(sx0, bodyY - bh / 2, bw, bh, r * 0.42);
   }
 
-  // --- head.
-  const hx = x + tilt * 1.4;
-  g.fillStyle(c.body, 1).fillCircle(hx, headY, headR);
-  g.lineStyle(Math.max(2, r * 0.085), c.trim, 1).strokeCircle(hx, headY, headR);
+  // --- head: boxy for the robot, round for everyone else.
+  const hx = x + tilt * 1.4 + leanX;
+  g.fillStyle(c.body, 1);
+  g.lineStyle(Math.max(2, r * 0.085), c.trim, 1);
+  if (c.square) {
+    g.fillRoundedRect(hx - headR, headY - headR * 0.94, headR * 2, headR * 1.88, headR * 0.34);
+    g.strokeRoundedRect(hx - headR, headY - headR * 0.94, headR * 2, headR * 1.88, headR * 0.34);
+  } else {
+    g.fillCircle(hx, headY, headR);
+    g.strokeCircle(hx, headY, headR);
+  }
+  g.fillStyle(0xffffff, 0.16).fillEllipse(hx - headR * 0.3, headY - headR * 0.42, headR * 0.9, headR * 0.6);
+
   drawPattern(g, c, hx, headY, headR);
   drawFrontParts(g, c, hx, headY, headR, o.timeMs);
 
@@ -319,6 +343,19 @@ function drawFace(g: G, c: Character, x: number, y: number, hr: number, p: Playe
       g.fillStyle(0xffffff, 1).fillCircle(mx, my, eyeR * 0.72);
       if (!blinking) g.fillStyle(0x111111, 1).fillCircle(mx, my, eyeR * 0.36);
     }
+    // Eyebrows: they carry the mood better than the mouth does.
+    if (!stunned) {
+      const frog = c.ears === 'frog';
+      const browY = (frog ? y - hr * 1.26 : y - hr * 0.44) + ly * 0.6;
+      const cross = o.charging >= 0;
+      g.lineStyle(Math.max(2, hr * 0.13), c.trim, 0.95);
+      for (const side of [-1, 1]) {
+        const bx = x + side * eyeGap + lx;
+        const inner = cross ? hr * 0.14 : happy ? -hr * 0.12 : -hr * 0.04;
+        const outer = cross ? -hr * 0.08 : hr * 0.04;
+        g.lineBetween(bx - side * eyeR * 0.85, browY + outer, bx + side * eyeR * 0.85, browY + inner);
+      }
+    }
   }
 
   // Mouth.
@@ -357,18 +394,75 @@ export function previewPlayer(charId: string, x: number, y: number, team: 0 | 1 
 
 // ------------------------------------------------------------------- ball
 
-export function drawBall(g: G, x: number, y: number, spin: number, power: number): void {
+/** The last few places the ball was, so a fast shot leaves a streak. */
+export function drawBallTrail(g: G, pts: { x: number; y: number }[], power: number): void {
+  const n = pts.length;
+  for (let i = 0; i < n; i++) {
+    const k = (i + 1) / n;
+    g.fillStyle(power > 0.3 ? 0xff9f1c : 0xffffff, 0.3 * k);
+    g.fillCircle(pts[i].x, pts[i].y, BALL_R * (0.3 + 0.62 * k));
+  }
+}
+
+export function drawBall(g: G, x: number, y: number, spin: number, power: number, vx = 0, vy = 0): void {
+  const sp = Math.hypot(vx, vy);
+  const fast = Math.min(1, sp / 950);
   if (power > 0.3) {
     g.fillStyle(0xff9f1c, 0.35).fillCircle(x, y, BALL_R + 14);
     g.fillStyle(0xffe14d, 0.5).fillCircle(x, y, BALL_R + 7);
   }
-  g.fillStyle(0x000000, 0.25).fillEllipse(x + 3, y + 6, BALL_R * 2.1, BALL_R * 1.5);
-  g.fillStyle(0xffffff).fillCircle(x, y, BALL_R);
-  g.lineStyle(2, 0x222222).strokeCircle(x, y, BALL_R);
+  // The shadow drops away as the ball flies, which reads as speed.
+  g.fillStyle(0x000000, 0.25 - fast * 0.08)
+    .fillEllipse(x + 3 + fast * 5, y + 6 + fast * 6, BALL_R * 2.1, BALL_R * 1.5);
+  if (fast < 0.06) {
+    // Standing still: a plain circle, which is the cheapest thing to draw.
+    g.fillStyle(0xffffff).fillCircle(x, y, BALL_R);
+    g.lineStyle(2, 0x222222).strokeCircle(x, y, BALL_R);
+  } else {
+    // Travelling: stretched along the way it is going.
+    g.save();
+    g.translateCanvas(x, y);
+    g.rotateCanvas(Math.atan2(vy, vx));
+    const ew = BALL_R * 2 * (1 + fast * 0.55);
+    const eh = BALL_R * 2 * (1 - fast * 0.22);
+    g.fillStyle(0xffffff).fillEllipse(0, 0, ew, eh);
+    g.lineStyle(2, 0x222222).strokeEllipse(0, 0, ew, eh);
+    g.restore();
+  }
   g.fillStyle(0x222222);
   for (let i = 0; i < 3; i++) {
     const ang = spin + (i * Math.PI * 2) / 3;
-    g.fillCircle(x + Math.cos(ang) * 5.5, y + Math.sin(ang) * 5.5, 2.8);
+    g.fillCircle(x + Math.cos(ang) * 5.5, y + Math.sin(ang) * 5.5 * (1 - fast * 0.3), 2.8 * (1 - fast * 0.25));
+  }
+}
+
+/** The net pushed out of shape by a goal: `k` runs from 1 down to 0. */
+export function drawNetBulge(g: G, side: -1 | 1, k: number): void {
+  if (k <= 0) return;
+  const { goalTop, goalBottom, goalDepth, left, right } = F;
+  const gx = side < 0 ? left : right;
+  const wobble = 0.65 + 0.35 * Math.sin(k * 26);
+  const push = 20 * k * wobble;
+  g.fillStyle(0xffffff, 0.16 * k);
+  g.fillEllipse(gx + side * (goalDepth * 0.6 + push * 0.5), (goalTop + goalBottom) / 2,
+    goalDepth * 1.1 + push, (goalBottom - goalTop) * 0.8);
+  g.lineStyle(2, 0xffffff, 0.75);
+  for (let y = goalTop + 6; y < goalBottom; y += 13) {
+    const bump = Math.sin((Math.PI * (y - goalTop)) / (goalBottom - goalTop));
+    g.lineBetween(gx, y, gx + side * (goalDepth + push * bump), y);
+  }
+}
+
+/** Streaks left on the grass by a slide, which fade away. */
+export function drawSlideMark(g: G, x: number, y: number, fx: number, fy: number, k: number): void {
+  const len = 54;
+  const px = -fy;
+  const py = fx;
+  g.lineStyle(7, 0x2d5d33, 0.4 * k);
+  for (const side of [-1, 1]) {
+    const ox = px * side * 9;
+    const oy = py * side * 9;
+    g.lineBetween(x + ox - fx * len, y + oy - fy * len + 6, x + ox, y + oy + 6);
   }
 }
 
@@ -578,6 +672,21 @@ export function drawStadium(g: G, viewW: number, themeId?: string): void {
     g.fillStyle(col).fillRect(left + i * sw, top, sw, bottom - top);
   }
   g.fillStyle(0xffffff, 0.1).fillEllipse(midX, midY, (right - left) * 0.8, (bottom - top) * 0.85);
+
+  // Grass texture: short blades, always in the same places.
+  for (let i = 0; i < 520; i++) {
+    const bx = left + rand() * (right - left);
+    const by = top + rand() * (bottom - top);
+    g.fillStyle(rand() < 0.5 ? 0xffffff : 0x000000, 0.05).fillRect(bx, by, 3 + rand() * 6, 2);
+  }
+  // Pools of light, and edges a touch darker, so the pitch has some depth.
+  for (const cx of [left + (right - left) * 0.24, right - (right - left) * 0.24]) {
+    g.fillStyle(0xffffff, 0.05).fillEllipse(cx, midY, (right - left) * 0.5, (bottom - top) * 0.95);
+  }
+  for (let i = 0; i < 7; i++) {
+    g.lineStyle(14, 0x000000, 0.035);
+    g.strokeRect(left + i * 7, top + i * 7, right - left - i * 14, bottom - top - i * 14);
+  }
 
   // Markings.
   g.lineStyle(5, t.line, t.lineAlpha);

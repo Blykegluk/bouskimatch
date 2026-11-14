@@ -9,7 +9,8 @@ import {
   type AbilityKind, type Difficulty, type GameState, type Player, type PlayerInput, type SimEvent, type TeamLineup,
 } from './sim';
 import {
-  drawBall, drawCharacter, drawPickup, drawStadium, newAnim, stepAnim, type Anim,
+  drawBall, drawBallTrail, drawCharacter, drawNetBulge, drawPickup, drawSlideMark, drawStadium,
+  newAnim, stepAnim, type Anim,
 } from './render';
 import { FONT, bigButton, setButtonLabel } from './ui';
 
@@ -69,6 +70,10 @@ export class MatchScene extends Phaser.Scene {
   private charAnims: Anim[] = [];
   /** Short-lived drawn effects: shockwaves and impact bursts. */
   private fx: { x: number; y: number; age: number; life: number; kind: 'ring' | 'burst'; color: number; size: number }[] = [];
+  /** Slide streaks left on the grass, and the last places the ball was. */
+  private marks: { x: number; y: number; fx: number; fy: number; age: number }[] = [];
+  private trail: { x: number; y: number }[] = [];
+  private bulge = { side: 1 as -1 | 1, t: 0 };
   private dust!: Phaser.GameObjects.Particles.ParticleEmitter;
   private flames!: Phaser.GameObjects.Particles.ParticleEmitter;
   private confetti!: Phaser.GameObjects.Particles.ParticleEmitter;
@@ -144,6 +149,9 @@ export class MatchScene extends Phaser.Scene {
     this.lastScore = '';
     this.world.add(this.pitch);
     this.fx = [];
+    this.marks = [];
+    this.trail = [];
+    this.bulge.t = 0;
     this.charAnims = this.state.players.map(() => {
       const a = newAnim();
       return a;
@@ -651,10 +659,15 @@ export class MatchScene extends Phaser.Scene {
         this.dust.explode(8, e.x, e.y);
         this.fx.push({ x: e.x, y: e.y, age: 0, life: 0.4, kind: 'ring', color: 0xffffff, size: 90 });
         break;
-      case 'slide':
+      case 'slide': {
         sfx.slide();
         this.dust.explode(10, e.x, e.y);
+        // Leave a streak on the grass, pointing the way the slide is going.
+        const sl = this.state.players.find((q) => q.slideT > 0 && Math.hypot(q.x - e.x, q.y - e.y) < 46);
+        this.marks.push({ x: e.x, y: e.y, fx: sl?.fx ?? 1, fy: sl?.fy ?? 0, age: 0 });
+        if (this.marks.length > 14) this.marks.shift();
         break;
+      }
       case 'stun':
         sfx.stun();
         this.dust.explode(14, e.x, e.y);
@@ -686,6 +699,7 @@ export class MatchScene extends Phaser.Scene {
           }
         }
         if (mine) sfx.goal(); else sfx.conceded();
+        this.bulge = { side: e.team === 0 ? 1 : -1, t: 0.9 };
         this.refreshHud();
         this.cameras.main.shake(260, 0.008);
         if (mine) {
@@ -925,6 +939,10 @@ export class MatchScene extends Phaser.Scene {
       }
     }
 
+    // Slide streaks, under everything, fading over a few seconds.
+    this.marks = this.marks.filter((m) => (m.age += dt) < 3.5);
+    for (const m of this.marks) drawSlideMark(g, m.x, m.y, m.fx, m.fy, 1 - m.age / 3.5);
+
     for (const pk of s.pickups) {
       if (!pk.alive) continue;
       drawPickup(g, pk.x, pk.y, this.time.now);
@@ -936,7 +954,20 @@ export class MatchScene extends Phaser.Scene {
 
     const b = s.ball;
     if (b.power > 0.3) this.flames.emitParticleAt(b.x, b.y, 2);
-    drawBall(g, b.x, b.y, b.spin, b.power);
+    // A streak behind the ball while it travels fast.
+    if (Math.hypot(b.vx, b.vy) > 420) {
+      this.trail.push({ x: b.x, y: b.y });
+      if (this.trail.length > 9) this.trail.shift();
+    } else if (this.trail.length) {
+      this.trail.shift();
+    }
+    drawBallTrail(g, this.trail, b.power);
+    drawBall(g, b.x, b.y, b.spin, b.power, b.vx, b.vy);
+
+    if (this.bulge.t > 0) {
+      this.bulge.t = Math.max(0, this.bulge.t - dt);
+      drawNetBulge(g, this.bulge.side, this.bulge.t / 0.9);
+    }
 
     this.drawHud();
   }
@@ -947,7 +978,8 @@ export class MatchScene extends Phaser.Scene {
     if (p.turboT > 0 && Math.random() < 0.8) this.flames.emitParticleAt(p.x - p.fx * 24, p.y - p.fy * 24, 1);
     if (p.slideT > 0 && Math.random() < 0.7) this.dust.emitParticleAt(p.x, p.y + 8, 1);
     drawCharacter(g, p, characterById(p.charId), {
-      radius: playerRadius(p),
+      // Drawn a little larger than they really are, so they read on a phone.
+      radius: playerRadius(p) * 1.12,
       controlled: seat === this.seat,
       otherHuman: seat >= 0 && seat !== this.seat,
       anim,
