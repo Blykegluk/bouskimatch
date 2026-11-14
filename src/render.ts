@@ -90,7 +90,13 @@ export function drawCharacter(g: G, p: Player, c: Character, o: DrawOpts): void 
   const run = Math.min(1, a.speed / 320);
   const leanX = p.fx * run * r * 0.1;
   const leanY = p.fy * run * r * 0.05;
-  const bodyY = ground - r * 0.72 + low + leanY;
+  // A bounce in the stride, and a slow breath when standing still.
+  const bob = running
+    ? -Math.abs(Math.sin(a.phase)) * r * 0.1
+    : Math.sin(o.timeMs / 900 + a.phase) * r * 0.025;
+  // Just after a shot the leg is still out in front.
+  const kickT = Math.min(1, Math.max(0, p.kickCd / 0.3));
+  const bodyY = ground - r * 0.72 + low + leanY + bob;
   const headR = r * build.hr;
   const headY = bodyY - r * 0.95 + low * 0.7 + leanY;
   const bw = r * build.bw;
@@ -106,22 +112,30 @@ export function drawCharacter(g: G, p: Player, c: Character, o: DrawOpts): void 
   const swing = running ? Math.sin(a.phase) : 0;
   for (const side of [-1, 1]) {
     const lift = Math.max(0, swing * side) * r * 0.34;
-    const lx = x + side * r * 0.4 - p.fx * lean * 0.7;
-    const ly = ground + r * 0.1 - lift - p.fy * lean * 0.5;
+    // The right leg is the one that strikes the ball.
+    const strike = side > 0 ? kickT : 0;
+    const lx = x + side * r * 0.4 - p.fx * lean * 0.7 + p.fx * strike * r * 0.75;
+    const ly = ground + r * 0.1 - lift - p.fy * lean * 0.5 + p.fy * strike * r * 0.55 - strike * r * 0.18;
     g.fillStyle(c.trim, 1).fillEllipse(lx, ly, r * 0.44, r * 0.66);
     g.fillStyle(BOOT, 1).fillEllipse(lx + side * r * 0.04, ly + r * 0.32, r * 0.52, r * 0.32);
   }
 
   // --- arms, swinging the other way to the legs.
+  const cheering = a.celebrate > 0;
   const armSwing = running ? Math.sin(a.phase + Math.PI) : Math.sin(o.timeMs / 520) * 0.2;
   const keeperHands = p.keeper;
   for (const side of [-1, 1]) {
-    const ax = x + side * (bw / 2 + r * 0.16) + tilt * side;
-    const ay = bodyY + r * 0.1 + armSwing * side * r * 0.24;
-    g.fillStyle(shirt, 1).fillEllipse(ax, ay - r * 0.16, r * 0.4, r * 0.56);
-    g.fillStyle(keeperHands ? 0xffe14d : c.body, 1).fillCircle(ax + side * r * 0.05, ay + r * 0.26, r * 0.24);
+    // Arms go up in the air to celebrate.
+    const ax = x + side * (bw / 2 + r * (cheering ? 0.42 : 0.16)) + tilt * side;
+    const ay = cheering
+      ? bodyY - r * 0.78 + Math.sin(o.timeMs / 90) * r * 0.12
+      : bodyY + r * 0.1 + armSwing * side * r * 0.24;
+    const sleeveY = cheering ? ay + r * 0.14 : ay - r * 0.16;
+    const handY = cheering ? ay - r * 0.38 : ay + r * 0.26;
+    g.fillStyle(shirt, 1).fillEllipse(ax, sleeveY, r * 0.4, r * 0.56);
+    g.fillStyle(keeperHands ? 0xffe14d : c.body, 1).fillCircle(ax + side * r * 0.05, handY, r * 0.24);
     g.lineStyle(Math.max(1.5, r * 0.07), keeperHands ? 0xc9a400 : c.trim, 1)
-      .strokeCircle(ax + side * r * 0.05, ay + r * 0.26, r * 0.24);
+      .strokeCircle(ax + side * r * 0.05, handY, r * 0.24);
   }
 
   // --- shirt.

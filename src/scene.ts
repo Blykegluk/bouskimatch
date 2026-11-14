@@ -533,8 +533,8 @@ export class MatchScene extends Phaser.Scene {
       this.pitch.clear();
       drawStadium(this.pitch, w, this.pitchTheme);
     }
-    this.scoreText.setPosition(w / 2, 28);
-    this.clockText.setPosition(w / 2, 66);
+    this.scoreText.setPosition(w / 2, 36);
+    this.clockText.setPosition(w / 2, 79);
     this.bigText.setPosition(w / 2, h / 2 - 20);
     this.netText.setPosition(w / 2, 148);
     this.pauseBtn.x = 54;
@@ -717,6 +717,14 @@ export class MatchScene extends Phaser.Scene {
         });
         this.fx.push({ x: e.x, y: e.y, age: 0, life: 0.6, kind: 'ring', color: 0xffe14d, size: 240 });
         this.flash(mine ? 'BUT !' : 'Oups !', mine ? '#ffe14d' : '#ffffff');
+        // Who scored it, under the banner.
+        const scorer = this.state.players[this.lastOwner];
+        if (scorer && scorer.team === e.team) {
+          const ch = characterById(scorer.charId);
+          this.abilityText.setText(`${ch.face}  ${ch.name} !`).setVisible(true).setAlpha(1).setScale(0.6);
+          this.tweens.add({ targets: this.abilityText, scale: 1, duration: 260, ease: 'Back.easeOut' });
+          this.tweens.add({ targets: this.abilityText, alpha: 0, delay: 1300, duration: 400 });
+        }
         break;
       }
       case 'end':
@@ -753,6 +761,8 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private lastScore = '';
+  /** The last player to have the ball, so a goal can be credited by name. */
+  private lastOwner = -1;
 
   private refreshHud(): void {
     const s = this.state;
@@ -953,6 +963,7 @@ export class MatchScene extends Phaser.Scene {
       .forEach((i) => this.drawPlayer(g, s.players[i], i));
 
     const b = s.ball;
+    if (b.owner >= 0) this.lastOwner = b.owner;
     if (b.power > 0.3) this.flames.emitParticleAt(b.x, b.y, 2);
     // A streak behind the ball while it travels fast.
     if (Math.hypot(b.vx, b.vy) > 420) {
@@ -1006,22 +1017,38 @@ export class MatchScene extends Phaser.Scene {
     ui.fillRect(pb.x - 10, pb.y - 12, 7, 24);
     ui.fillRect(pb.x + 3, pb.y - 12, 7, 24);
 
+    // Scoreboard: a panel with a colour tab for each team.
+    const pw = 372;
+    const px = w / 2 - pw / 2;
+    ui.fillStyle(0x08240f, 0.72).fillRoundedRect(px, 6, pw, 58, 20);
+    ui.lineStyle(4, 0xffffff, 0.75).strokeRoundedRect(px, 6, pw, 58, 20);
+    ui.fillStyle(0x2f7bff, 1).fillRoundedRect(px + 12, 16, 18, 38, 8);
+    ui.fillStyle(0xff4d4d, 1).fillRoundedRect(px + pw - 30, 16, 18, 38, 8);
+
     const secs = Math.ceil(s.clock);
     this.clockText.setText(`${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`);
-    this.clockText.setColor(secs <= 15 ? '#ffd23f' : '#eaffea');
+    const low = secs <= 15 && s.phase !== 'over';
+    this.clockText.setColor(low ? '#ffd23f' : '#eaffea');
+    // The clock sits in its own little pill under the score.
+    const cw = low ? 124 : 108;
+    ui.fillStyle(0x08240f, 0.72).fillRoundedRect(w / 2 - cw / 2, 64, cw, 30, 15);
+    ui.lineStyle(3, low ? 0xffd23f : 0xffffff, low ? 0.9 : 0.6)
+      .strokeRoundedRect(w / 2 - cw / 2, 64, cw, 30, 15);
+    this.clockText.setScale(low ? 1 + Math.sin(this.time.now / 160) * 0.06 : 1);
 
-    // Super gauge.
+    // Super gauge, with a lightning pip at the end when it is full.
     const meter = s.teams[this.myTeam].meter;
-    const bw = 300;
+    const bw = 280;
     const bx = w / 2 - bw / 2;
-    const by = 94;
-    ui.fillStyle(0x000000, 0.35).fillRoundedRect(bx, by, bw, 20, 10);
+    const by = 100;
+    ui.fillStyle(0x08240f, 0.6).fillRoundedRect(bx, by, bw, 18, 9);
     const col = meter >= 1 ? 0xffe14d : 0xb05cff;
-    ui.fillStyle(col, 1).fillRoundedRect(bx + 2, by + 2, Math.max(6, (bw - 4) * meter), 16, 8);
-    ui.lineStyle(3, 0xffffff, 0.8).strokeRoundedRect(bx, by, bw, 20, 10);
+    ui.fillStyle(col, 1).fillRoundedRect(bx + 2, by + 2, Math.max(6, (bw - 4) * meter), 14, 7);
+    ui.fillStyle(0xffffff, 0.25).fillRoundedRect(bx + 3, by + 3, Math.max(4, (bw - 6) * meter), 5, 3);
+    ui.lineStyle(3, 0xffffff, 0.8).strokeRoundedRect(bx, by, bw, 18, 9);
     if (meter >= 1) {
       const pulse = 0.5 + Math.sin(this.time.now / 110) * 0.5;
-      ui.lineStyle(4, 0xffffff, 0.4 + pulse * 0.6).strokeRoundedRect(bx - 4, by - 4, bw + 8, 28, 14);
+      ui.lineStyle(4, 0xffe14d, 0.35 + pulse * 0.65).strokeRoundedRect(bx - 4, by - 4, bw + 8, 26, 13);
     }
 
     if (s.phase === 'kickoff') {

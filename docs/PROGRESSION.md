@@ -121,6 +121,8 @@ ballon s'étire quand il file et laisse une traînée, les glissades laissent de
 traces sur l'herbe, le filet se déforme sur un but, et la pelouse a de la texture
 et des flaques de lumière. Coût mesuré : 3,5 ms par image au lieu de 3,2.
 
+Troisième passe le 14/11 : la course a du rebond, le joueur arme la jambe après un tir, les bras se lèvent pour célébrer, et on respire à l'arrêt. Tableau de score en panneau avec les couleurs des deux équipes, chrono dans sa pastille qui bat la mesure dans les quinze dernières secondes, jauge de pouvoir plus lisible, et le nom du buteur s'affiche sous le BUT !
+
 ## 7. Les lots, dans l’ordre
 
 | Lot | Contenu | Ce que tu verras |
