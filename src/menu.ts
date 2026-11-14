@@ -4,7 +4,7 @@ import { CHARACTERS } from './characters';
 import { openLobby } from './lobby';
 import { PITCHES } from './pitches';
 import { levelFor, levelRatio, load as loadProgress } from './progress';
-import { drawCharacter, newAnim, previewPlayer, stepAnim } from './render';
+import { drawCharacter, drawStadium, newAnim, previewPlayer, stepAnim } from './render';
 import type { Difficulty } from './sim';
 import { FONT, bigButton } from './ui';
 
@@ -21,6 +21,8 @@ const PITCH_Y = 464;
 const PITCH_GAP = 262;
 
 export class MenuScene extends Phaser.Scene {
+  private bgPitch!: Phaser.GameObjects.Graphics;
+  private bgVeil!: Phaser.GameObjects.Graphics;
   private portraits!: Phaser.GameObjects.Graphics;
   private portraitAnims: ReturnType<typeof newAnim>[] = [];
   private charPick = 0;
@@ -44,12 +46,11 @@ export class MenuScene extends Phaser.Scene {
     this.diffPick = (this.registry.get('diffPick') as Difficulty) ?? 'easy';
     this.pitchPick = (this.registry.get('themePick') as string) ?? 'stade';
 
-    const bg = this.add.graphics();
-    bg.fillStyle(0x1f7a35).fillRect(0, 0, w, h);
-    for (let i = 0; i < 14; i++) {
-      bg.fillStyle(i % 2 === 0 ? 0x2a8a40 : 0x24803a, 1).fillRect((i * w) / 14, 0, w / 14, h);
-    }
-    bg.fillStyle(0xffffff, 0.08).fillCircle(w / 2, h / 2, 230);
+    // The chosen pitch, drawn behind the menu: picking one shows what it
+    // looks like before the match starts.
+    this.bgPitch = this.add.graphics();
+    this.bgVeil = this.add.graphics();
+    this.drawBackdrop();
 
     this.add.text(w / 2, 62, 'BOUSKIMATCH', {
       fontFamily: FONT, fontSize: '70px', fontStyle: 'bold', color: '#ffe14d',
@@ -114,7 +115,7 @@ export class MenuScene extends Phaser.Scene {
       this.pitchMarks.push(this.add.graphics());
       bigButton(this, x, PITCH_Y, {
         w: 248, h: 62, label: `${p.icon} ${p.name}`, color: 0x3b7f8c, fontSize: 26,
-        onClick: () => { this.pitchPick = p.id; this.drawMarks(); },
+        onClick: () => { this.pitchPick = p.id; this.drawMarks(); this.drawBackdrop(); },
       });
     });
 
@@ -143,9 +144,21 @@ export class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5);
 
     this.drawMarks();
+    this.cameras.main.fadeIn(220, 0, 0, 0);
 
     // A shared link (…?p=CODE) opens the join screen straight away.
     if (new URLSearchParams(location.search).get('p')) this.openOnline();
+  }
+
+  /** The chosen pitch as wallpaper, dimmed so the buttons stay readable. */
+  private drawBackdrop(): void {
+    const w = this.scale.width;
+    const h = this.scale.height;
+    this.bgPitch.clear();
+    drawStadium(this.bgPitch, w, this.pitchPick);
+    this.bgPitch.setPosition((w - 1280) / 2, 0);
+    this.bgVeil.clear();
+    this.bgVeil.fillStyle(0x062b12, 0.52).fillRect(-w, -h, w * 3, h * 3);
   }
 
   /** The level badge and the bar: what the player has earned so far. */

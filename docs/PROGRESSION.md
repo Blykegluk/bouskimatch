@@ -123,6 +123,8 @@ et des flaques de lumière. Coût mesuré : 3,5 ms par image au lieu de 3,2.
 
 Troisième passe le 14/11 : la course a du rebond, le joueur arme la jambe après un tir, les bras se lèvent pour célébrer, et on respire à l'arrêt. Tableau de score en panneau avec les couleurs des deux équipes, chrono dans sa pastille qui bat la mesure dans les quinze dernières secondes, jauge de pouvoir plus lisible, et le nom du buteur s'affiche sous le BUT !
 
+Quatrième passe le 14/11 : le menu montre le terrain choisi en fond, donc on voit le château ou l'arc-en-ciel avant de jouer ; manette et boutons tactiles avec ombre et reflet ; fondu à l'ouverture du menu et du match ; traits de vitesse derrière un turbo, halo pulsant autour du gardien géant et éclair d'écran sur le boulet de canon. Coût mesuré : nul.
+
 ## 7. Les lots, dans l’ordre
 
 | Lot | Contenu | Ce que tu verras |

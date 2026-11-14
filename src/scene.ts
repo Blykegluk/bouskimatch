@@ -227,6 +227,7 @@ export class MatchScene extends Phaser.Scene {
       if (this.leaving) this.link?.close();
     });
 
+    this.cameras.main.fadeIn(220, 0, 0, 0);
     this.setupInput();
     this.layout();
     this.refreshHud();
@@ -735,7 +736,10 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private onAbility(kind: AbilityKind, team: 0 | 1, x: number, y: number): void {
-    if (kind === 'cannon') sfx.cannon();
+    if (kind === 'cannon') {
+      sfx.cannon();
+      this.cameras.main.flash(140, 255, 220, 140, false);
+    }
     else if (kind === 'turbo') sfx.turbo();
     else if (kind === 'keeper') sfx.giant();
     else sfx.slide();
@@ -987,6 +991,24 @@ export class MatchScene extends Phaser.Scene {
     const seat = this.state.controlled.indexOf(i);
     const anim = this.charAnims[i];
     if (p.turboT > 0 && Math.random() < 0.8) this.flames.emitParticleAt(p.x - p.fx * 24, p.y - p.fy * 24, 1);
+    if (p.turboT > 0) {
+      // Speed lines streaming out behind a turbo.
+      const px = -p.fy;
+      const py = p.fx;
+      g.lineStyle(4, 0xffe14d, 0.55);
+      for (const side of [-1, 0, 1]) {
+        const ox = px * side * 16;
+        const oy = py * side * 16;
+        const len = 34 + Math.abs(side) * 10 + Math.sin(this.time.now / 70 + side) * 8;
+        g.lineBetween(p.x + ox - p.fx * 26, p.y + oy - p.fy * 26,
+          p.x + ox - p.fx * (26 + len), p.y + oy - p.fy * (26 + len));
+      }
+    }
+    if (p.keeper && p.giantT > 0) {
+      const pulse = 0.5 + Math.sin(this.time.now / 130) * 0.5;
+      g.lineStyle(5, 0xb05cff, 0.3 + pulse * 0.5);
+      g.strokeEllipse(p.x, p.y + 14, 120 + pulse * 16, 56 + pulse * 8);
+    }
     if (p.slideT > 0 && Math.random() < 0.7) this.dust.emitParticleAt(p.x, p.y + 8, 1);
     drawCharacter(g, p, characterById(p.charId), {
       // Drawn a little larger than they really are, so they read on a phone.
@@ -1063,12 +1085,26 @@ export class MatchScene extends Phaser.Scene {
     }
 
     if (this.joy.active) {
-      ui.fillStyle(0xffffff, 0.16).fillCircle(this.joy.bx, this.joy.by, JOY_R);
-      ui.lineStyle(4, 0xffffff, 0.5).strokeCircle(this.joy.bx, this.joy.by, JOY_R);
-      ui.fillStyle(0xffffff, 0.75).fillCircle(this.joy.bx + this.joy.dx, this.joy.by + this.joy.dy, 32);
+      const jx = this.joy.bx;
+      const jy = this.joy.by;
+      ui.fillStyle(0x000000, 0.22).fillCircle(jx, jy + 4, JOY_R + 3);
+      ui.fillStyle(0xffffff, 0.15).fillCircle(jx, jy, JOY_R);
+      ui.lineStyle(5, 0xffffff, 0.55).strokeCircle(jx, jy, JOY_R);
+      // Four little marks, so a child sees it is a direction pad.
+      ui.fillStyle(0xffffff, 0.3);
+      for (let i = 0; i < 4; i++) {
+        const ang = (i * Math.PI) / 2;
+        ui.fillCircle(jx + Math.cos(ang) * (JOY_R - 14), jy + Math.sin(ang) * (JOY_R - 14), 4);
+      }
+      const kx = jx + this.joy.dx;
+      const ky = jy + this.joy.dy;
+      ui.fillStyle(0x000000, 0.25).fillCircle(kx, ky + 4, 33);
+      ui.fillStyle(0xffffff, 0.85).fillCircle(kx, ky, 33);
+      ui.fillStyle(0xffffff, 0.45).fillCircle(kx, ky - 8, 20);
     } else {
-      ui.lineStyle(4, 0xffffff, 0.3).strokeCircle(150, h - 150, JOY_R);
-      ui.fillStyle(0xffffff, 0.3).fillCircle(150, h - 150, 32);
+      ui.lineStyle(5, 0xffffff, 0.28).strokeCircle(150, h - 150, JOY_R);
+      ui.fillStyle(0xffffff, 0.3).fillCircle(150, h - 150, 33);
+      ui.fillStyle(0xffffff, 0.16).fillCircle(150, h - 158, 20);
     }
 
     if (!this.isTouch) return;
@@ -1077,9 +1113,13 @@ export class MatchScene extends Phaser.Scene {
       const held = this.touchHeld(b.role);
       const isSuper = b.role === 'special';
       const r = held ? b.r * 0.92 : b.r;
-      const alpha = isSuper && !ready ? 0.3 : held ? 0.95 : 0.72;
+      const alpha = isSuper && !ready ? 0.34 : held ? 0.95 : 0.8;
+      // A shadow underneath, a lighter cap on top: it looks like a real button.
+      ui.fillStyle(0x000000, 0.3).fillCircle(b.x, b.y + (held ? 3 : 7), r);
       ui.fillStyle(b.color, alpha).fillCircle(b.x, b.y, r);
-      ui.lineStyle(5, 0xffffff, isSuper && !ready ? 0.4 : 0.85).strokeCircle(b.x, b.y, r);
+      ui.fillStyle(0xffffff, held ? 0.1 : 0.22).fillEllipse(b.x, b.y - r * 0.38, r * 1.3, r * 0.75);
+      ui.lineStyle(5, 0xffffff, isSuper && !ready ? 0.4 : 0.9).strokeCircle(b.x, b.y, r);
+      b.icon.setPosition(b.x, b.y + (held ? 3 : 0));
       if (isSuper) {
         b.icon.setText(ABILITY_ICON[abilityFor(s, this.myPlayer)]);
         b.icon.setAlpha(ready ? 1 : 0.4);
