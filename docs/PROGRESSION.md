@@ -112,7 +112,7 @@ plus il y a de choses à gagner, plus elles doivent être jolies.
 
 | Lot | Contenu | Ce que tu verras |
 |---|---|---|
-| A | Ballons d’or, niveaux, écran de fin qui récompense, sauvegarde | Chaque partie fait avancer une barre |
+| A ✅ | Ballons d’or, niveaux, écran de fin qui récompense, sauvegarde | Chaque partie fait avancer une barre |
 | B | L’album + 12 tenues + 8 ballons | Un écran de collection qui se remplit |
 | C | Rendu des personnages et du terrain (§6) | Le jeu ne ressemble plus à un prototype |
 | D | 6 nouveaux personnages | 12 personnages au total |

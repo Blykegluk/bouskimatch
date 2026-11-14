@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { sfx, unlockAudio } from './audio';
 import { CHARACTERS } from './characters';
 import { openLobby } from './lobby';
+import { levelFor, levelRatio, load as loadProgress } from './progress';
 import { drawCharacter, newAnim, previewPlayer, stepAnim } from './render';
 import type { Difficulty } from './sim';
 import { FONT, bigButton } from './ui';
@@ -46,6 +47,8 @@ export class MenuScene extends Phaser.Scene {
     this.add.text(w / 2, 132, 'Le foot rigolo', {
       fontFamily: FONT, fontSize: '26px', color: '#eaffea', stroke: '#0b3d1a', strokeThickness: 4,
     }).setOrigin(0.5);
+
+    this.drawProgress();
 
     // --- characters
     this.add.text(w / 2, 196, 'Choisis ton perso', {
@@ -121,6 +124,31 @@ export class MenuScene extends Phaser.Scene {
 
     // A shared link (…?p=CODE) opens the join screen straight away.
     if (new URLSearchParams(location.search).get('p')) this.openOnline();
+  }
+
+  /** The level badge and the bar: what the player has earned so far. */
+  private drawProgress(): void {
+    const p = loadProgress();
+    const lvl = levelFor(p.balls);
+    const x = 74;
+    const y = 64;
+    const bx = 118;
+    const bw = 252;
+    const bh = 20;
+    const g = this.add.graphics();
+    g.fillStyle(0x0b3d1a, 0.5).fillRoundedRect(28, 24, 364, 80, 20);
+    g.fillStyle(0x08300f, 0.9).fillRoundedRect(bx, y - 10 - bh / 2, bw, bh, bh / 2);
+    g.fillStyle(0xffe14d, 1).fillRoundedRect(bx, y - 10 - bh / 2, Math.max(bh, bw * levelRatio(p.balls)), bh, bh / 2);
+    g.lineStyle(3, 0xffffff, 0.85).strokeRoundedRect(bx, y - 10 - bh / 2, bw, bh, bh / 2);
+    g.fillStyle(0xffe14d, 1).fillCircle(x, y, 32);
+    g.lineStyle(5, 0xffffff, 0.9).strokeCircle(x, y, 32);
+    this.add.text(x, y, `${lvl}`, {
+      fontFamily: FONT, fontSize: '32px', fontStyle: 'bold', color: '#12612a',
+    }).setOrigin(0.5);
+    this.add.text(bx, y + 22, `Niveau ${lvl}   ·   ⚽ ${p.balls}`, {
+      fontFamily: FONT, fontSize: '19px', fontStyle: 'bold', color: '#eaffea',
+      stroke: '#0b3d1a', strokeThickness: 4,
+    }).setOrigin(0, 0.5);
   }
 
   private remember(): void {

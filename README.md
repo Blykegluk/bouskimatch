@@ -7,8 +7,13 @@ Petit jeu de foot rigolo pour enfants (6-12 ans), jouable dans le navigateur sur
 **V1 en ligne** : https://blykegluk.github.io/bouskimatch/
 
 Les cinq étapes prévues sont faites : prototype, match 3 contre 3, jeu à deux en ligne,
-personnages et rendu, finitions. Reste le test par les enfants, puis le plan de progression
-(skins, pouvoirs et persos à gagner en jouant).
+personnages et rendu, finitions.
+
+La suite suit `docs/PROGRESSION.md`. Le lot A est en place : chaque match rapporte des
+ballons d’or (partie jouée, victoire, buts, but au canon, arrêts, première partie du jour),
+l’écran de fin les égrène un par un, et la barre de niveau se remplit — 30 niveaux, rien ne
+se perd jamais, et rien de tout ça ne rend plus fort contre un copain. Le niveau et le total
+sont affichés au menu, gardés dans le navigateur.
 
 ## Sur le téléphone
 

@@ -110,4 +110,7 @@ export const sfx = {
   win(): void { [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, f, 0.3, 0.2, 'square', i * 0.13)); },
   lose(): void { [440, 392, 330, 262].forEach((f, i) => tone(f, f, 0.32, 0.18, 'triangle', i * 0.16)); },
   click(): void { tone(700, 500, 0.06, 0.14, 'triangle'); },
+  /** One ticking coin per reward line on the end screen; `i` raises the pitch. */
+  coin(i = 0): void { tone(720 + i * 70, 1080 + i * 70, 0.09, 0.13, 'triangle'); },
+  levelUp(): void { [523, 659, 784, 1047, 1319, 1568].forEach((f, i) => tone(f, f, 0.2, 0.17, 'square', i * 0.1)); },
 };

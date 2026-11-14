@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { isMuted, setMuted, sfx, unlockAudio } from './audio';
 import { CHARACTERS, characterById } from './characters';
 import { SnapshotBuffer, type GuestLink, type HostLink, type StartMsg } from './net';
+import { ballsToNext, finishMatch, levelRatio, MAX_LEVEL, type MatchTally } from './progress';
 import {
   CHARGE_MAX, DIFFS, F, MATCH_TIME, NO_INPUT, PLAYER_R, STEP,
   abilityFor, createState, playerRadius, step,
@@ -78,6 +79,10 @@ export class MatchScene extends Phaser.Scene {
   private hint!: Phaser.GameObjects.Text;
   private layoutW = 0;
 
+  /** What this match earns, counted as it happens (see progress.ts). */
+  private tally: MatchTally = { result: 'draw', goals: 0, cannonGoals: 0, saves: 0 };
+  private lastCannon = { team: -1, t: -1e9 };
+
   private keys = new Set<string>();
   private isTouch = false;
   private touches = new Map<number, TouchRole>();
@@ -122,6 +127,8 @@ export class MatchScene extends Phaser.Scene {
     }
     this.bindLink();
     this.acc = 0;
+    this.tally = { result: 'draw', goals: 0, cannonGoals: 0, saves: 0 };
+    this.lastCannon = { team: -1, t: -1e9 };
     this.isTouch = window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
     this.keys.clear();
     this.touches.clear();
@@ -631,6 +638,8 @@ export class MatchScene extends Phaser.Scene {
         sfx.bounce();
         break;
       case 'save':
+        // A save in the half the player defends is their keeper's.
+        if ((e.x < F.w / 2) === (this.myTeam === 0)) this.tally.saves += 1;
         sfx.save();
         sfx.ooh();
         this.dust.explode(8, e.x, e.y);
@@ -654,6 +663,7 @@ export class MatchScene extends Phaser.Scene {
         if (e.team === this.myTeam) sfx.ready();
         break;
       case 'ability':
+        if (e.kind === 'cannon') this.lastCannon = { team: e.team, t: this.time.now };
         this.onAbility(e.kind, e.team, e.x, e.y);
         break;
       case 'whistle':
@@ -662,6 +672,13 @@ export class MatchScene extends Phaser.Scene {
         break;
       case 'goal': {
         const mine = e.team === this.myTeam;
+        if (mine) {
+          this.tally.goals += 1;
+          // A goal within a couple of seconds of our cannon counts as one.
+          if (this.lastCannon.team === this.myTeam && this.time.now - this.lastCannon.t < 2200) {
+            this.tally.cannonGoals += 1;
+          }
+        }
         if (mine) sfx.goal(); else sfx.conceded();
         this.refreshHud();
         this.cameras.main.shake(260, 0.008);
@@ -729,6 +746,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private showEnd(): void {
+    if (this.endLayer.visible) return;
     const s = this.state;
     const w = this.scale.width;
     const h = this.scale.height;
@@ -743,28 +761,129 @@ export class MatchScene extends Phaser.Scene {
     }
     this.bigText.setVisible(false);
 
+    // What the match earned, written down before anything is shown.
+    this.tally.result = won ? 'win' : draw ? 'draw' : 'lose';
+    const r = finishMatch(this.tally);
+
+    const pw = 660;
+    const ph = 406 + r.lines.length * 32;
+    const top = h / 2 - ph / 2;
     const panel = this.add.graphics();
     panel.fillStyle(0x000000, 0.55).fillRect(0, 0, w, h);
-    panel.fillStyle(0x12612a, 0.96).fillRoundedRect(w / 2 - 300, h / 2 - 190, 600, 340, 26);
-    panel.lineStyle(6, 0xffffff, 0.9).strokeRoundedRect(w / 2 - 300, h / 2 - 190, 600, 340, 26);
-    const title = this.add.text(w / 2, h / 2 - 118, won ? 'TU AS GAGNÉ !' : draw ? 'ÉGALITÉ !' : 'PERDU…', {
-      fontFamily: FONT, fontSize: '58px', fontStyle: 'bold',
+    panel.fillStyle(0x12612a, 0.96).fillRoundedRect(w / 2 - pw / 2, top, pw, ph, 26);
+    panel.lineStyle(6, 0xffffff, 0.9).strokeRoundedRect(w / 2 - pw / 2, top, pw, ph, 26);
+    const title = this.add.text(w / 2, top + 54, won ? 'TU AS GAGNÉ !' : draw ? 'ÉGALITÉ !' : 'PERDU…', {
+      fontFamily: FONT, fontSize: '52px', fontStyle: 'bold',
       color: won ? '#ffe14d' : '#ffffff', stroke: '#0b3d1a', strokeThickness: 9,
     }).setOrigin(0.5);
-    const score = this.add.text(w / 2, h / 2 - 42, `${s.score[0]} – ${s.score[1]}`, {
-      fontFamily: FONT, fontSize: '66px', fontStyle: 'bold', color: '#ffffff',
+    const score = this.add.text(w / 2, top + 116, `${s.score[0]} – ${s.score[1]}`, {
+      fontFamily: FONT, fontSize: '52px', fontStyle: 'bold', color: '#ffffff',
       stroke: '#0b3d1a', strokeThickness: 8,
     }).setOrigin(0.5);
     const parts: Phaser.GameObjects.GameObject[] = [panel, title, score];
-    // Only the host can start another match; the guest just follows.
+
+    // --- what the match earned, one line at a time so it feels like a reward
+    const lineStyle = {
+      fontFamily: FONT, fontSize: '26px', fontStyle: 'bold', color: '#ffffff',
+      stroke: '#0b3d1a', strokeThickness: 5,
+    };
+    let y = top + 170;
+    const STAGGER = 180;
+    r.lines.forEach((l, i) => {
+      const left = this.add.text(w / 2 - 270, y, `${l.icon}  ${l.label}`, lineStyle).setOrigin(0, 0.5).setAlpha(0);
+      const right = this.add.text(w / 2 + 270, y, `+${l.balls}`, { ...lineStyle, color: '#ffe14d' })
+        .setOrigin(1, 0.5).setAlpha(0);
+      const delay = 240 + i * STAGGER;
+      this.tweens.add({ targets: [left, right], alpha: 1, duration: 150, delay });
+      this.time.delayedCall(delay, () => sfx.coin(i));
+      parts.push(left, right);
+      y += 32;
+    });
+
+    // --- the total, then the level bar filling up
+    const afterLines = 240 + r.lines.length * STAGGER;
+    y += 14;
+    const total = this.add.text(w / 2, y, `⚽ +${r.total} ballons d'or`, {
+      fontFamily: FONT, fontSize: '34px', fontStyle: 'bold', color: '#ffe14d',
+      stroke: '#0b3d1a', strokeThickness: 7,
+    }).setOrigin(0.5).setAlpha(0).setScale(0.6);
+    this.tweens.add({ targets: total, alpha: 1, scale: 1, duration: 260, delay: afterLines, ease: 'Back.easeOut' });
+    parts.push(total);
+
+    y += 54;
+    const barX = w / 2 - 198;
+    const barW = 450;
+    const barH = 26;
+    const bar = this.add.graphics();
+    const badgeX = w / 2 - 248;
+    const lvl = this.add.text(badgeX, y, `${r.levelBefore}`, {
+      fontFamily: FONT, fontSize: '32px', fontStyle: 'bold', color: '#12612a',
+    }).setOrigin(0.5);
+    const anim = { k: levelRatio(r.before), lvl: r.levelBefore };
+    const drawBar = (): void => {
+      bar.clear();
+      bar.fillStyle(0xffe14d, 1).fillCircle(badgeX, y, 30);
+      bar.lineStyle(5, 0xffffff, 0.9).strokeCircle(badgeX, y, 30);
+      bar.fillStyle(0x0b3d1a, 0.85).fillRoundedRect(barX, y - barH / 2, barW, barH, barH / 2);
+      bar.fillStyle(0xffe14d, 1).fillRoundedRect(barX, y - barH / 2, Math.max(barH, barW * anim.k), barH, barH / 2);
+      bar.lineStyle(4, 0xffffff, 0.9).strokeRoundedRect(barX, y - barH / 2, barW, barH, barH / 2);
+      lvl.setText(`${anim.lvl}`);
+    };
+    drawBar();
+    const hintY = y + 46;
+    const hint = this.add.text(w / 2, hintY, '', {
+      fontFamily: FONT, fontSize: '22px', fontStyle: 'bold', color: '#eaffea',
+      stroke: '#0b3d1a', strokeThickness: 5,
+    }).setOrigin(0.5).setAlpha(0);
+    parts.push(bar, lvl, hint);
+
+    const fillTo = (k: number, duration: number, onDone?: () => void): void => {
+      this.tweens.add({
+        targets: anim, k, duration, ease: 'Cubic.easeOut',
+        onUpdate: drawBar,
+        onComplete: () => { drawBar(); onDone?.(); },
+      });
+    };
+    const settle = (): void => {
+      const left = ballsToNext(r.after);
+      hint.setText(r.levelAfter >= MAX_LEVEL
+        ? '🏅 Niveau maxi !'
+        : `Plus que ${left} ⚽ avant le niveau ${r.levelAfter + 1}`);
+      this.tweens.add({ targets: hint, alpha: 1, duration: 220 });
+    };
+    this.time.delayedCall(afterLines + 320, () => {
+      if (!r.levelUp) {
+        fillTo(levelRatio(r.after), 700, settle);
+        return;
+      }
+      // Fill to the top, celebrate the new level, then start the next one.
+      fillTo(1, 520, () => {
+        sfx.levelUp();
+        this.confetti.explode(90, F.w / 2 - 180, 300);
+        anim.k = 0;
+        anim.lvl = r.levelAfter;
+        drawBar();
+        lvl.setScale(1.8);
+        this.tweens.add({ targets: lvl, scale: 1, duration: 380, ease: 'Back.easeOut' });
+        hint.setText(`🎉 Niveau ${r.levelAfter} !`).setColor('#ffe14d').setFontSize(28);
+        this.tweens.add({ targets: hint, alpha: 1, duration: 200 });
+        this.time.delayedCall(1100, () => {
+          hint.setColor('#eaffea').setFontSize(22);
+          fillTo(levelRatio(r.after), 520, settle);
+        });
+      });
+    });
+
+    // --- the way out. Only the host can start another match; the guest follows.
+    const btnY = top + ph - 62;
     if (this.role !== 'guest') {
-      parts.push(bigButton(this, w / 2 - 150, h / 2 + 68, {
-        w: 260, h: 84, label: '↻  Rejouer', color: 0x2f7bff, fontSize: 34,
+      parts.push(bigButton(this, w / 2 - 150, btnY, {
+        w: 260, h: 80, label: '↻  Rejouer', color: 0x2f7bff, fontSize: 34,
         onClick: () => this.replayMatch(),
       }));
     }
-    parts.push(bigButton(this, w / 2 + (this.role === 'guest' ? 0 : 150), h / 2 + 68, {
-      w: 260, h: 84, label: '☰  Menu', color: 0x4ec76a, fontSize: 34,
+    parts.push(bigButton(this, w / 2 + (this.role === 'guest' ? 0 : 150), btnY, {
+      w: 260, h: 80, label: '☰  Menu', color: 0x4ec76a, fontSize: 34,
       onClick: () => this.quitToMenu(),
     }));
     this.endLayer.add(parts);
