@@ -15,6 +15,7 @@ export interface LobbyResult {
 export interface LobbyOpts {
   charId: string;
   difficulty: Difficulty;
+  theme: string;
   onPlay: (r: LobbyResult) => void;
   onCancel: () => void;
 }
@@ -203,7 +204,7 @@ export function openLobby(opts: LobbyOpts): () => void {
       const host = link as HostLink;
       if (!host || !host.ready) return;
       const { home, away } = lineups(opts.charId, guestChar, mode);
-      const start = { difficulty: opts.difficulty, mode, seed: Math.floor(Math.random() * 1e9), home, away };
+      const start = { difficulty: opts.difficulty, theme: opts.theme, mode, seed: Math.floor(Math.random() * 1e9), home, away };
       host.sendStart(start);
       close();
       opts.onPlay({ role: 'host', link: host, start });

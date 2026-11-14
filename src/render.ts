@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import type { Character } from './characters';
+import { pitchById, type Pitch } from './pitches';
 import { BALL_R, F, type Player } from './sim';
 
 type G = Phaser.GameObjects.Graphics;
@@ -47,89 +48,123 @@ interface DrawOpts {
   jersey?: boolean;
 }
 
+const BOOT = 0x2b2b33;
+
+function clamp(v: number, lo: number, hi: number): number {
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
 /**
- * One character, built from circles and triangles only: no image to download,
- * and it stays crisp at any size (a giant keeper is the same drawing, bigger).
+ * One character: feet, legs, a shirt, arms, hands and a head, all built from
+ * shapes in code — no image to download, and it stays crisp at any size.
+ * The view is from above and slightly behind, so the body stands up on the
+ * pitch and the head turns the way the player is facing.
  */
 export function drawCharacter(g: G, p: Player, c: Character, o: DrawOpts): void {
   const r = o.radius;
   const a = o.anim;
-  const fx = p.fx;
-  const fy = p.fy;
-  const px = -fy;
-  const py = fx;
-  const hop = a.celebrate > 0 ? Math.abs(Math.sin(o.timeMs / 90)) * r * 0.45 : 0;
-  const cx = p.x;
-  const cy = p.y - hop;
-  // Place a point relative to the character: forward along the facing, side across it.
-  const at = (fwd: number, side: number): [number, number] => [
-    cx + fx * fwd + px * side,
-    cy + fy * fwd + py * side,
-  ];
-
   const running = a.speed > 40;
   const stunned = p.stunT > 0;
+  const sliding = p.slideT > 0;
+  const hop = a.celebrate > 0 ? Math.abs(Math.sin(o.timeMs / 90)) * r * 0.5 : 0;
 
-  // Shadow stays on the ground even when the character jumps.
-  g.fillStyle(0x000000, 0.25).fillEllipse(p.x + 3, p.y + r * 0.55, r * 2.3, r * 1.15);
+  // Sliding throws the body forward and flattens it towards the grass.
+  const lean = sliding ? r * 0.8 : 0;
+  const low = sliding ? r * 0.55 : 0;
+  const x = p.x + p.fx * lean;
+  const ground = p.y + p.fy * lean * 0.45 - hop;
 
-  // Feet, swinging when running.
-  const swing = running ? Math.sin(a.phase) * r * 0.42 : 0;
-  for (const side of [-1, 1]) {
-    const [fxp, fyp] = at(swing * side - r * 0.1, side * r * 0.6);
-    g.fillStyle(c.trim, 1).fillEllipse(fxp, fyp, r * 0.52, r * 0.42);
-  }
-
-  // Jersey: the team colour, read from across the pitch.
   const jersey = o.jersey !== false;
-  const squash = stunned ? 1.1 : 1 + Math.min(0.12, a.speed / 4000);
-  g.fillStyle(jersey ? TEAM_TINT[p.team] : c.trim, 1);
-  if (p.slideT > 0) {
-    g.fillEllipse(cx, cy, r * 2.64 * (1 + Math.abs(fx) * 0.35), r * 2.64 * (1 + Math.abs(fy) * 0.35));
-  } else {
-    g.fillEllipse(cx, cy, r * 2.64 * squash, r * 2.64 / squash);
+  const shirt = jersey ? TEAM_TINT[p.team] : c.trim;
+  const shirtDark = jersey ? TEAM_DARK[p.team] : c.trim;
+
+  const bodyY = ground - r * 0.72 + low;
+  const headR = r * 0.9;
+  const headY = bodyY - r * 0.95 + low * 0.7;
+  const bw = r * 1.62;
+  const bh = r * 1.4;
+  const tilt = stunned ? Math.sin(o.timeMs / 110) * r * 0.12 : 0;
+
+  // The shadow stays on the grass, under the feet, even during a jump.
+  g.fillStyle(0x000000, 0.25).fillEllipse(p.x + r * 0.1, p.y + r * 0.42, r * 2.05, r * 0.9);
+
+  drawBackParts(g, c, x, headY, headR, bodyY, a);
+
+  // --- legs: they swing when running, and trail behind during a slide.
+  const swing = running ? Math.sin(a.phase) : 0;
+  for (const side of [-1, 1]) {
+    const lift = Math.max(0, swing * side) * r * 0.34;
+    const lx = x + side * r * 0.4 - p.fx * lean * 0.7;
+    const ly = ground + r * 0.1 - lift - p.fy * lean * 0.5;
+    g.fillStyle(c.trim, 1).fillEllipse(lx, ly, r * 0.44, r * 0.66);
+    g.fillStyle(BOOT, 1).fillEllipse(lx + side * r * 0.04, ly + r * 0.32, r * 0.52, r * 0.32);
   }
-  g.lineStyle(3, jersey ? TEAM_DARK[p.team] : c.trim, 1).strokeCircle(cx, cy, r * 1.32);
+
+  // --- arms, swinging the other way to the legs.
+  const armSwing = running ? Math.sin(a.phase + Math.PI) : Math.sin(o.timeMs / 520) * 0.2;
+  const keeperHands = p.keeper;
+  for (const side of [-1, 1]) {
+    const ax = x + side * (bw / 2 + r * 0.16) + tilt * side;
+    const ay = bodyY + r * 0.1 + armSwing * side * r * 0.24;
+    g.fillStyle(shirt, 1).fillEllipse(ax, ay - r * 0.16, r * 0.4, r * 0.56);
+    g.fillStyle(keeperHands ? 0xffe14d : c.body, 1).fillCircle(ax + side * r * 0.05, ay + r * 0.26, r * 0.24);
+    g.lineStyle(Math.max(1.5, r * 0.07), keeperHands ? 0xc9a400 : c.trim, 1)
+      .strokeCircle(ax + side * r * 0.05, ay + r * 0.26, r * 0.24);
+  }
+
+  // --- shirt.
+  g.fillStyle(shirt, 1).fillRoundedRect(x - bw / 2 + tilt, bodyY - bh / 2, bw, bh, r * 0.42);
+  g.lineStyle(Math.max(2, r * 0.09), shirtDark, 1)
+    .strokeRoundedRect(x - bw / 2 + tilt, bodyY - bh / 2, bw, bh, r * 0.42);
   if (jersey) {
-    // A couple of shirt stripes at the back.
-    g.lineStyle(Math.max(2, r * 0.13), TEAM_DARK[p.team], 0.55);
-    for (const k of [-0.45, 0.1]) {
-      const [sx, sy] = at(-r * 1.0 + k * r * 0.2, -r * 1.25);
-      const [ex, ey] = at(-r * 1.0 + k * r * 0.2, r * 1.25);
-      g.lineBetween(sx, sy, ex, ey);
+    // Two stripes and a collar, so the two teams read at a glance.
+    g.fillStyle(shirtDark, 0.55);
+    for (const k of [-0.3, 0.16]) {
+      g.fillRect(x + k * bw + tilt, bodyY - bh / 2 + r * 0.14, bw * 0.14, bh - r * 0.28);
+    }
+    g.fillStyle(0xffffff, 0.85).fillEllipse(x + tilt, bodyY - bh / 2 + r * 0.08, bw * 0.46, r * 0.26);
+  }
+  if (p.keeper) {
+    g.lineStyle(Math.max(2, r * 0.1), 0xffe14d, 0.95)
+      .strokeRoundedRect(x - bw / 2 + tilt, bodyY - bh / 2, bw, bh, r * 0.42);
+  }
+
+  // --- head.
+  const hx = x + tilt * 1.4;
+  g.fillStyle(c.body, 1).fillCircle(hx, headY, headR);
+  g.lineStyle(Math.max(2, r * 0.085), c.trim, 1).strokeCircle(hx, headY, headR);
+  drawPattern(g, c, hx, headY, headR);
+  drawFrontParts(g, c, hx, headY, headR, o.timeMs);
+
+  // Facing away from us: the back of the head, no face.
+  if (p.fy < -0.55 && !stunned) {
+    g.fillStyle(c.trim, 0.35).fillCircle(hx, headY + headR * 0.1, headR * 0.6);
+  } else {
+    drawFace(g, c, hx, headY, headR, p, a, o);
+  }
+
+  // --- who is who: a ring on the grass, and an arrow for your own player.
+  if (o.controlled || o.otherHuman) {
+    const col = o.controlled ? 0xffe14d : 0x58d6ff;
+    g.lineStyle(Math.max(4, r * 0.18), col, 0.95)
+      .strokeEllipse(p.x, p.y + r * 0.42, r * 2.3, r * 1.05);
+    const ty = headY - headR - r * 0.5;
+    if (o.controlled) {
+      g.fillStyle(col, 0.95)
+        .fillTriangle(p.x - r * 0.5, ty - r * 0.55, p.x + r * 0.5, ty - r * 0.55, p.x, ty + r * 0.05);
+    } else {
+      g.fillStyle(col, 0.9).fillCircle(p.x, ty - r * 0.25, r * 0.28);
     }
   }
 
-  if (p.keeper) {
-    g.lineStyle(Math.max(3, r * 0.12), 0xffe14d, 0.95).strokeCircle(cx, cy, r * 1.32);
-  }
-
-  drawEars(g, c, r, at, a, o.timeMs, true);
-  // Head.
-  g.fillStyle(c.body, 1).fillCircle(cx, cy, r);
-  g.lineStyle(Math.max(2, r * 0.1), c.trim, 1).strokeCircle(cx, cy, r);
-  drawPattern(g, c, r, at);
-  drawEars(g, c, r, at, a, o.timeMs, false);
-  drawFace(g, c, r, at, p, a, o);
-
-  // Who is who.
-  if (o.controlled) {
-    g.lineStyle(Math.max(4, r * 0.2), 0xffe14d, 0.95).strokeCircle(cx, cy, r * 1.75);
-    g.fillStyle(0xffe14d, 0.95);
-    const ty = cy - r * 2.1;
-    g.fillTriangle(cx - r * 0.55, ty - r * 0.6, cx + r * 0.55, ty - r * 0.6, cx, ty + r * 0.1);
-  } else if (o.otherHuman) {
-    g.lineStyle(Math.max(4, r * 0.2), 0x58d6ff, 0.9).strokeCircle(cx, cy, r * 1.75);
-    g.fillStyle(0x58d6ff, 0.9).fillCircle(cx, cy - r * 2.1, r * 0.3);
-  }
-
+  // --- the shot charging up, as a ring round the feet.
   if (o.charging >= 0) {
     const t = Math.min(1, o.charging);
     const col = Phaser.Display.Color.Interpolate.ColorWithColor(
       new Phaser.Display.Color(255, 230, 60), new Phaser.Display.Color(255, 60, 40), 100, t * 100);
-    g.lineStyle(Math.max(5, r * 0.3), Phaser.Display.Color.GetColor(col.r, col.g, col.b), 0.95);
+    g.lineStyle(Math.max(5, r * 0.26), Phaser.Display.Color.GetColor(col.r, col.g, col.b), 0.95);
     g.beginPath();
-    g.arc(cx, cy, r * 2.1, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * t);
+    g.arc(p.x, p.y + r * 0.42, r * 1.3, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * t);
     g.strokePath();
   }
 
@@ -137,198 +172,174 @@ export function drawCharacter(g: G, p: Player, c: Character, o: DrawOpts): void 
     g.fillStyle(0xffe14d, 0.95);
     for (let k = 0; k < 3; k++) {
       const ang = o.timeMs / 180 + (k * Math.PI * 2) / 3;
-      g.fillCircle(cx + Math.cos(ang) * r * 1.5, cy - r * 1.5 + Math.sin(ang) * r * 0.3, r * 0.18);
+      g.fillCircle(hx + Math.cos(ang) * headR * 1.3, headY - headR * 1.2 + Math.sin(ang) * headR * 0.3, r * 0.17);
     }
   }
 }
 
-type At = (fwd: number, side: number) => [number, number];
-
-function drawEars(g: G, c: Character, r: number, at: At, a: Anim, timeMs: number, behind: boolean): void {
-  switch (c.ears) {
-    case 'cat': {
-      if (behind) return;
-      for (const side of [-1, 1]) {
-        const [bx, by] = at(r * 0.15, side * r * 0.82);
-        const [tx, ty] = at(r * 0.5, side * r * 1.25);
-        const [ox, oy] = at(-r * 0.35, side * r * 0.72);
-        g.fillStyle(c.body, 1).fillTriangle(bx, by, tx, ty, ox, oy);
-        g.fillStyle(c.accent, 0.8).fillTriangle(
-          (bx + tx) / 2, (by + ty) / 2, tx, ty, (ox + tx) / 2, (oy + ty) / 2);
-      }
-      return;
-    }
-    case 'antenna': {
-      if (behind) return;
-      const [bx, by] = at(r * 0.1, 0);
-      const [tx, ty] = at(r * 0.1, -r * 1.55);
-      g.lineStyle(Math.max(2, r * 0.11), c.trim, 1).lineBetween(bx, by, tx, ty);
-      const blink = 0.55 + 0.45 * Math.sin(timeMs / 220);
-      g.fillStyle(c.accent, blink).fillCircle(tx, ty, r * 0.22);
-      return;
-    }
-    case 'horns': {
-      if (behind) return;
-      for (const side of [-1, 1]) {
-        const [bx, by] = at(r * 0.3, side * r * 0.66);
-        const [tx, ty] = at(r * 0.95, side * r * 1.0);
-        const [ox, oy] = at(r * 0.1, side * r * 0.95);
-        g.fillStyle(c.accent, 1).fillTriangle(bx, by, tx, ty, ox, oy);
-      }
-      return;
-    }
-    case 'frog': {
-      // Bulging eye mounts, drawn before the head so they peek over the top.
-      if (!behind) return;
-      for (const side of [-1, 1]) {
-        const [ex, ey] = at(r * 0.52, side * r * 0.62);
-        g.fillStyle(c.body, 1).fillCircle(ex, ey, r * 0.46);
-        g.lineStyle(Math.max(2, r * 0.09), c.trim, 1).strokeCircle(ex, ey, r * 0.46);
-      }
-      return;
-    }
-    case 'tentacles': {
-      if (!behind) return;
-      for (let k = -2; k <= 2; k++) {
-        if (k === 0) continue;
-        const wob = Math.sin(a.phase * 0.8 + k) * r * 0.3;
-        const [sx, sy] = at(-r * 0.5, k * r * 0.45);
-        const [mx, my] = at(-r * 1.1, k * r * 0.62 + wob * 0.5);
-        const [ex, ey] = at(-r * 1.6, k * r * 0.7 + wob);
-        g.lineStyle(Math.max(3, r * 0.22), c.body, 1);
+/** Ears and limbs that belong behind the head and body. */
+function drawBackParts(g: G, c: Character, x: number, headY: number, hr: number, bodyY: number, a: Anim): void {
+  if (c.ears === 'tentacles') {
+    for (const side of [-1, 1]) {
+      for (let k = 1; k <= 2; k++) {
+        const wob = Math.sin(a.phase * 0.8 + k * side) * hr * 0.25;
+        const sx = x + side * hr * 0.5;
+        const ex = x + side * (hr * 0.9 + k * hr * 0.42);
+        g.lineStyle(Math.max(3, hr * 0.26), c.body, 1);
         g.beginPath();
-        g.moveTo(sx, sy);
-        g.lineTo(mx, my);
-        g.lineTo(ex, ey);
+        g.moveTo(sx, bodyY - hr * 0.1);
+        g.lineTo((sx + ex) / 2, bodyY + hr * 0.35 + wob);
+        g.lineTo(ex, bodyY + hr * 0.75 + wob * 0.5);
         g.strokePath();
-        g.fillStyle(c.accent, 0.9).fillCircle(ex, ey, r * 0.12);
       }
-      return;
     }
-    case 'fin': {
-      if (!behind) return;
-      for (let k = 0; k < 3; k++) {
-        const base = -r * 0.5 - k * r * 0.42;
-        const size = r * (0.42 - k * 0.07);
-        const [bx, by] = at(base, -size);
-        const [tx, ty] = at(base + size * 0.9, 0);
-        const [ox, oy] = at(base, size);
-        g.fillStyle(c.accent, 1).fillTriangle(bx, by, tx, ty, ox, oy);
-      }
+    return;
+  }
+  if (c.ears === 'fin') {
+    for (let k = 0; k < 3; k++) {
+      const size = hr * (0.5 - k * 0.1);
+      const fy = headY - hr * 0.2 + k * hr * 0.55;
+      g.fillStyle(c.accent, 1).fillTriangle(x - size, fy + size, x + size, fy + size, x, fy - size * 0.9);
     }
   }
 }
 
-function drawPattern(g: G, c: Character, r: number, at: At): void {
+/** Ears, horns and antennae that sit on top of the head. */
+function drawFrontParts(g: G, c: Character, x: number, y: number, hr: number, timeMs: number): void {
+  switch (c.ears) {
+    case 'cat':
+      for (const side of [-1, 1]) {
+        const bx = x + side * hr * 0.2;
+        const tx = x + side * hr * 1.0;
+        g.fillStyle(c.body, 1).fillTriangle(bx, y - hr * 0.78, tx, y - hr * 1.5, x + side * hr * 0.92, y - hr * 0.5);
+        g.fillStyle(c.accent, 0.85).fillTriangle(
+          bx + side * hr * 0.22, y - hr * 0.86, tx - side * hr * 0.1, y - hr * 1.28, x + side * hr * 0.76, y - hr * 0.62);
+      }
+      return;
+    case 'antenna': {
+      g.lineStyle(Math.max(2, hr * 0.12), c.trim, 1).lineBetween(x, y - hr * 0.8, x, y - hr * 1.7);
+      const blink = 0.5 + 0.5 * Math.sin(timeMs / 220);
+      g.fillStyle(c.accent, blink).fillCircle(x, y - hr * 1.78, hr * 0.24);
+      return;
+    }
+    case 'horns':
+      for (const side of [-1, 1]) {
+        g.fillStyle(c.accent, 1).fillTriangle(
+          x + side * hr * 0.42, y - hr * 0.82,
+          x + side * hr * 1.0, y - hr * 1.42,
+          x + side * hr * 0.86, y - hr * 0.62);
+      }
+      return;
+    case 'frog':
+      for (const side of [-1, 1]) {
+        const ex = x + side * hr * 0.52;
+        const ey = y - hr * 0.78;
+        g.fillStyle(c.body, 1).fillCircle(ex, ey, hr * 0.42);
+        g.lineStyle(Math.max(2, hr * 0.09), c.trim, 1).strokeCircle(ex, ey, hr * 0.42);
+      }
+  }
+}
+
+function drawPattern(g: G, c: Character, x: number, y: number, hr: number): void {
   switch (c.pattern) {
     case 'stripes':
-      g.lineStyle(Math.max(2, r * 0.11), c.trim, 0.8);
+      g.lineStyle(Math.max(2, hr * 0.12), c.trim, 0.75);
       for (const side of [-1, 1]) {
-        for (const k of [0.1, -0.25]) {
-          const [sx, sy] = at(r * (0.2 + k), side * r * 0.5);
-          const [ex, ey] = at(r * (0.05 + k), side * r * 0.92);
-          g.lineBetween(sx, sy, ex, ey);
+        for (const k of [0, 1]) {
+          const sx = x + side * hr * (0.3 + k * 0.3);
+          g.lineBetween(sx, y - hr * 0.72, sx + side * hr * 0.2, y - hr * 0.3);
         }
       }
       return;
-    case 'bolts': {
+    case 'bolts':
       g.fillStyle(c.trim, 0.85);
-      for (const side of [-1, 1]) {
-        const [bx, by] = at(-r * 0.45, side * r * 0.62);
-        g.fillCircle(bx, by, r * 0.13);
-      }
-      const [lx, ly] = at(-r * 0.75, 0);
-      g.fillCircle(lx, ly, r * 0.12);
+      for (const side of [-1, 1]) g.fillCircle(x + side * hr * 0.78, y + hr * 0.1, hr * 0.13);
       return;
-    }
     case 'spots':
-      g.fillStyle(c.accent, 0.55);
-      for (const [f, s] of [[-0.35, -0.5], [-0.55, 0.3], [-0.1, 0.65]] as const) {
-        const [sx, sy] = at(r * f, r * s);
-        g.fillCircle(sx, sy, r * 0.17);
+      g.fillStyle(c.accent, 0.5);
+      for (const [dx, dy, s] of [[-0.6, 0.35, 0.18], [0.58, 0.4, 0.15], [0.05, 0.72, 0.13]] as const) {
+        g.fillCircle(x + dx * hr, y + dy * hr, hr * s);
       }
   }
 }
 
-function drawFace(g: G, c: Character, r: number, at: At, p: Player, a: Anim, o: DrawOpts): void {
+function drawFace(g: G, c: Character, x: number, y: number, hr: number, p: Player, a: Anim, o: DrawOpts): void {
   const stunned = p.stunT > 0;
   const blinking = a.blink <= 0 && !stunned;
   const happy = a.celebrate > 0;
-  const eyeFwd = c.ears === 'frog' ? r * 0.52 : r * 0.34;
-  const eyeSide = c.ears === 'frog' ? r * 0.62 : r * 0.4;
-  const eyeR = c.eyes === 'big' ? r * 0.3 : r * 0.26;
-
-  const eye = (side: number): void => {
-    const [ex, ey] = at(eyeFwd, side * eyeSide);
-    if (stunned) {
-      g.lineStyle(Math.max(2, r * 0.12), 0x222222, 1);
-      const s = eyeR * 0.8;
-      g.lineBetween(ex - s, ey - s, ex + s, ey + s);
-      g.lineBetween(ex + s, ey - s, ex - s, ey + s);
-      return;
-    }
-    g.fillStyle(0xffffff, 1).fillCircle(ex, ey, eyeR);
-    if (blinking) {
-      g.lineStyle(Math.max(2, r * 0.1), 0x222222, 1).lineBetween(ex - eyeR, ey, ex + eyeR, ey);
-      return;
-    }
-    if (happy) {
-      // Smiling eyes: an upward arc instead of a pupil.
-      g.lineStyle(Math.max(2, r * 0.11), 0x222222, 1);
-      g.beginPath();
-      g.arc(ex, ey + eyeR * 0.25, eyeR * 0.8, Math.PI * 1.15, Math.PI * 1.85);
-      g.strokePath();
-      return;
-    }
-    const [px2, py2] = at(eyeFwd + eyeR * 0.45, side * eyeSide);
-    g.fillStyle(0x111111, 1).fillCircle(px2, py2, eyeR * 0.52);
-    g.fillStyle(0xffffff, 0.9).fillCircle(px2 - eyeR * 0.15, py2 - eyeR * 0.2, eyeR * 0.17);
-  };
+  // The head turns a little towards where the player is heading.
+  const lx = clamp(p.fx, -1, 1) * hr * 0.26;
+  const ly = clamp(p.fy, -1, 1) * hr * 0.18;
+  const eyeY = y - hr * 0.06 + ly;
+  const eyeGap = c.ears === 'frog' ? hr * 0.52 : hr * 0.36;
+  const eyeR = c.eyes === 'big' ? hr * 0.3 : hr * 0.25;
 
   if (c.eyes === 'visor') {
-    const [vx, vy] = at(r * 0.34, 0);
-    g.fillStyle(0x222b38, 1).fillEllipse(vx, vy, r * 1.3, r * 0.6);
-    if (!stunned) {
-      const glow = blinking ? 0.25 : 0.95;
-      const [gx, gy] = at(r * 0.38, 0);
-      g.fillStyle(c.accent, glow).fillEllipse(gx, gy, r * (happy ? 0.5 : 0.95), r * 0.2);
+    g.fillStyle(0x222b38, 1).fillRoundedRect(x - hr * 0.72 + lx, eyeY - hr * 0.26, hr * 1.44, hr * 0.52, hr * 0.22);
+    if (stunned) {
+      g.lineStyle(Math.max(2, hr * 0.1), c.accent, 0.9).lineBetween(x + lx, eyeY - hr * 0.2, x + lx, eyeY + hr * 0.2);
     } else {
-      g.lineStyle(Math.max(2, r * 0.1), c.accent, 0.9);
-      const [sx, sy] = at(r * 0.38, -r * 0.4);
-      const [ex, ey] = at(r * 0.38, r * 0.4);
-      g.lineBetween(sx, sy, ex, ey);
-    }
-  } else if (c.eyes === 'three') {
-    eye(-1);
-    eye(1);
-    const [mx, my] = at(r * 0.62, 0);
-    if (!stunned) {
-      g.fillStyle(0xffffff, 1).fillCircle(mx, my, eyeR * 0.75);
-      if (!blinking) g.fillStyle(0x111111, 1).fillCircle(mx, my, eyeR * 0.38);
+      const glow = blinking ? 0.25 : 0.95;
+      g.fillStyle(c.accent, glow).fillRoundedRect(
+        x - hr * (happy ? 0.22 : 0.52) + lx, eyeY - hr * 0.09, hr * (happy ? 0.44 : 1.04), hr * 0.18, hr * 0.09);
     }
   } else {
+    const eye = (side: number): void => {
+      const ex = x + side * eyeGap + lx;
+      const ey = c.ears === 'frog' ? y - hr * 0.78 + ly * 0.5 : eyeY;
+      if (stunned) {
+        g.lineStyle(Math.max(2, hr * 0.12), 0x222222, 1);
+        const s = eyeR * 0.75;
+        g.lineBetween(ex - s, ey - s, ex + s, ey + s);
+        g.lineBetween(ex + s, ey - s, ex - s, ey + s);
+        return;
+      }
+      g.fillStyle(0xffffff, 1).fillCircle(ex, ey, eyeR);
+      if (blinking) {
+        g.lineStyle(Math.max(2, hr * 0.1), 0x222222, 1).lineBetween(ex - eyeR, ey, ex + eyeR, ey);
+        return;
+      }
+      if (happy) {
+        g.lineStyle(Math.max(2, hr * 0.11), 0x222222, 1);
+        g.beginPath();
+        g.arc(ex, ey + eyeR * 0.3, eyeR * 0.85, Math.PI * 1.15, Math.PI * 1.85);
+        g.strokePath();
+        return;
+      }
+      const px = ex + clamp(p.fx, -1, 1) * eyeR * 0.3;
+      const py = ey + clamp(p.fy, -1, 1) * eyeR * 0.3;
+      g.fillStyle(0x111111, 1).fillCircle(px, py, eyeR * 0.5);
+      g.fillStyle(0xffffff, 0.9).fillCircle(px - eyeR * 0.16, py - eyeR * 0.2, eyeR * 0.17);
+    };
     eye(-1);
     eye(1);
+    if (c.eyes === 'three' && !stunned) {
+      const mx = x + lx;
+      const my = y - hr * 0.5 + ly;
+      g.fillStyle(0xffffff, 1).fillCircle(mx, my, eyeR * 0.72);
+      if (!blinking) g.fillStyle(0x111111, 1).fillCircle(mx, my, eyeR * 0.36);
+    }
   }
 
   // Mouth.
-  const [mx, my] = at(r * (c.eyes === 'visor' ? 0.82 : 0.72), 0);
+  const mx = x + lx * 0.8;
+  const my = y + hr * 0.46 + ly * 0.6;
   if (stunned) {
-    g.fillStyle(0x7a2f2f, 1).fillEllipse(mx, my, r * 0.34, r * 0.3);
+    g.fillStyle(0x7a2f2f, 1).fillEllipse(mx, my, hr * 0.34, hr * 0.3);
     return;
   }
   if (happy) {
-    g.fillStyle(0x7a2f2f, 1).fillEllipse(mx, my, r * 0.62, r * 0.5);
-    g.fillStyle(0xffffff, 1).fillEllipse(mx, my - r * 0.14, r * 0.5, r * 0.16);
+    g.fillStyle(0x7a2f2f, 1).fillEllipse(mx, my, hr * 0.6, hr * 0.48);
+    g.fillStyle(0xffffff, 1).fillEllipse(mx, my - hr * 0.14, hr * 0.48, hr * 0.16);
     return;
   }
   if (o.charging >= 0 || a.speed > 300) {
-    g.fillStyle(0x7a2f2f, 1).fillEllipse(mx, my, r * 0.34, r * 0.34);
+    g.fillStyle(0x7a2f2f, 1).fillEllipse(mx, my, hr * 0.32, hr * 0.32);
     return;
   }
-  g.lineStyle(Math.max(2, r * 0.11), c.trim, 0.9);
+  g.lineStyle(Math.max(2, hr * 0.11), c.trim, 0.9);
   g.beginPath();
-  g.arc(mx, my - r * 0.12, r * 0.28, Math.PI * 0.15, Math.PI * 0.85);
+  g.arc(mx, my - hr * 0.14, hr * 0.3, Math.PI * 0.15, Math.PI * 0.85);
   g.strokePath();
 }
 
@@ -336,8 +347,8 @@ function drawFace(g: G, c: Character, r: number, at: At, p: Player, a: Anim, o: 
 export function previewPlayer(charId: string, x: number, y: number, team: 0 | 1 = 0): Player {
   return {
     team, keeper: false, role: 'fwd', charId, speedMul: 1, powerMul: 1,
-    // Facing up, so ears, horns and antennae show above the head.
-    x, y, vx: 0, vy: 0, fx: 0, fy: -1,
+    // Looking at us, so the face shows in the menu.
+    x, y, vx: 0, vy: 0, fx: 0, fy: 0.25,
     charge: -1, slideT: 0, slideCd: 0, kickCd: 0, stunT: 0, turboT: 0, giantT: 0, superSlide: false,
     prevShoot: false, prevSlide: false, prevSpecial: false,
     think: 0, aimErrX: 0, aimErrY: 0,
@@ -390,8 +401,150 @@ function seeded(seed: number): () => number {
 
 const CROWD = [0xff6b6b, 0xffd23f, 0x4ec76a, 0x58d6ff, 0xb05cff, 0xffffff, 0xff9f1c, 0xf26ab0];
 const BOARDS = [0x2f7bff, 0xffd23f, 0xe8524a, 0xffffff, 0x4ec76a];
+const RAINBOW = [0xff5d5d, 0xffa23f, 0xffe14d, 0x6fe06f, 0x58d6ff, 0x8f7bff, 0xf07be0];
 
-export function drawStadium(g: G, viewW: number): void {
+/** Whatever stands behind each goal: a crowd, castle walls, clouds, the sea. */
+function drawStand(g: G, t: Pitch, sx: number, depth: number, side: number, rand: () => number): void {
+  const { top, bottom } = F;
+  const h = bottom - top + 80;
+  const y0 = top - 40;
+  switch (t.decor) {
+    case 'crowd': {
+      const cols = Math.floor(depth / 17);
+      const rows = Math.floor(h / 17);
+      for (let i = 0; i < cols; i++) {
+        for (let j = 0; j < rows; j++) {
+          if (rand() < 0.18) continue;
+          g.fillStyle(CROWD[Math.floor(rand() * CROWD.length)], 0.75)
+            .fillCircle(sx + 9 + i * 17 + (j % 2) * 4, y0 + 8 + j * 17, 5);
+        }
+      }
+      return;
+    }
+    case 'castle': {
+      // Stone blocks, a row of battlements along the top, banners and torches.
+      const bw = 56;
+      const bh = 30;
+      for (let j = 0; j * bh < h; j++) {
+        for (let i = -1; i * bw < depth + bw; i++) {
+          const bx = sx + i * bw + (j % 2) * (bw / 2);
+          g.fillStyle(j % 2 === 0 ? 0x565668 : 0x4e4e5f, 1)
+            .fillRect(bx + 2, y0 + j * bh + 2, bw - 4, bh - 4);
+        }
+      }
+      const inner = side < 0 ? sx + depth : sx;
+      for (let j = 0; j * 46 < h; j++) {
+        if (j % 2) continue;
+        g.fillStyle(0x6b6b80, 1).fillRect(side < 0 ? inner - 26 : inner, y0 + j * 46, 26, 46);
+      }
+      for (const by of [top + 60, bottom - 120]) {
+        const bx = side < 0 ? sx + depth - 92 : sx + 56;
+        g.fillStyle(by === top + 60 ? 0xc0392b : 0x2f5fbf, 1).fillRect(bx, by, 40, 86);
+        g.fillStyle(0xffe14d, 1).fillTriangle(bx, by + 86, bx + 40, by + 86, bx + 20, by + 108);
+        g.fillStyle(0xffffff, 0.9).fillCircle(bx + 20, by + 34, 11);
+      }
+      for (const ty of [top + 10, bottom + 10]) {
+        const tx = side < 0 ? sx + depth - 40 : sx + 40;
+        g.fillStyle(0x3a2a1a, 1).fillRect(tx - 5, ty, 10, 34);
+        g.fillStyle(0xff9f1c, 0.45).fillCircle(tx, ty - 6, 22);
+        g.fillStyle(0xffe14d, 1).fillCircle(tx, ty - 6, 11);
+      }
+      return;
+    }
+    case 'rainbow': {
+      // Clouds and a few stars, as if the pitch floated in the sky.
+      for (let i = 0; i < 5; i++) {
+        const cx = sx + 40 + rand() * Math.max(20, depth - 80);
+        const cy = y0 + 40 + rand() * (h - 80);
+        const s = 20 + rand() * 16;
+        g.fillStyle(0xffffff, 0.95);
+        g.fillCircle(cx, cy, s);
+        g.fillCircle(cx - s * 0.9, cy + s * 0.2, s * 0.7);
+        g.fillCircle(cx + s * 0.95, cy + s * 0.15, s * 0.75);
+        g.fillCircle(cx + s * 0.1, cy - s * 0.6, s * 0.6);
+      }
+      for (let i = 0; i < 14; i++) {
+        const cx = sx + 10 + rand() * Math.max(20, depth - 20);
+        const cy = y0 + 10 + rand() * (h - 20);
+        g.fillStyle(0xffe14d, 0.9);
+        g.fillTriangle(cx, cy - 7, cx - 6, cy + 5, cx + 6, cy + 5);
+        g.fillTriangle(cx, cy + 7, cx - 6, cy - 5, cx + 6, cy - 5);
+      }
+      return;
+    }
+    case 'beach': {
+      // The sea, with little waves, and parasols along the sand.
+      for (let j = 0; j * 26 < h; j++) {
+        const wy = y0 + 13 + j * 26;
+        g.lineStyle(3, 0xffffff, 0.35);
+        for (let i = 0; i * 54 < depth; i++) {
+          const wx = sx + i * 54 + (j % 2) * 27;
+          g.beginPath();
+          g.arc(wx + 14, wy, 14, Math.PI, 0);
+          g.strokePath();
+        }
+      }
+      for (const py of [top + 70, bottom - 90]) {
+        const px = side < 0 ? sx + depth - 56 : sx + 56;
+        g.fillStyle(0x000000, 0.18).fillEllipse(px + 6, py + 40, 56, 18);
+        g.fillStyle(0xf2f2f2, 1).fillRect(px - 3, py, 6, 44);
+        for (let k = 0; k < 6; k++) {
+          const a0 = Math.PI + (k * Math.PI) / 6;
+          const a1 = Math.PI + ((k + 1) * Math.PI) / 6;
+          g.fillStyle(k % 2 === 0 ? 0xff5d5d : 0xffffff, 1);
+          g.fillTriangle(px, py, px + Math.cos(a0) * 46, py + Math.sin(a0) * 26,
+            px + Math.cos(a1) * 46, py + Math.sin(a1) * 26);
+        }
+      }
+    }
+  }
+}
+
+/** The strips just outside the touchlines. */
+function drawTouchlines(g: G, t: Pitch, rand: () => number): void {
+  const { left, right, top, bottom } = F;
+  switch (t.decor) {
+    case 'crowd':
+      for (let i = 0; i * 118 < right - left; i++) {
+        const bx = left + i * 118;
+        const bw = Math.min(110, right - bx);
+        if (bw < 20) break;
+        g.fillStyle(BOARDS[i % BOARDS.length], 0.9).fillRect(bx, top - 26, bw, 18);
+        g.fillStyle(BOARDS[(i + 2) % BOARDS.length], 0.9).fillRect(bx, bottom + 6, bw, 14);
+      }
+      break;
+    case 'castle':
+      for (let i = 0; i * 62 < right - left; i++) {
+        const bx = left + i * 62;
+        const bw = Math.min(58, right - bx);
+        if (bw < 12) break;
+        g.fillStyle(i % 2 === 0 ? 0x565668 : 0x474757, 1).fillRect(bx, top - 28, bw, 20);
+        g.fillStyle(i % 2 === 0 ? 0x474757 : 0x565668, 1).fillRect(bx, bottom + 6, bw, 16);
+      }
+      break;
+    case 'rainbow':
+      for (let i = 0; i * 48 < right - left; i++) {
+        const bx = left + i * 48;
+        const bw = Math.min(46, right - bx);
+        if (bw < 10) break;
+        g.fillStyle(RAINBOW[i % RAINBOW.length], 0.95).fillRect(bx, top - 28, bw, 20);
+        g.fillStyle(RAINBOW[(i + 3) % RAINBOW.length], 0.95).fillRect(bx, bottom + 6, bw, 16);
+      }
+      break;
+    case 'beach':
+      g.fillStyle(0xe8c87e, 1).fillRect(left - 10, top - 30, right - left + 20, 22);
+      g.fillStyle(0xe8c87e, 1).fillRect(left - 10, bottom + 6, right - left + 20, 18);
+      for (let i = 0; i < 40; i++) {
+        const sx2 = left + rand() * (right - left);
+        const sy = rand() < 0.5 ? top - 20 : bottom + 15;
+        g.fillStyle(rand() < 0.5 ? 0xffffff : 0xff9f9f, 0.9).fillCircle(sx2, sy, 3.5);
+      }
+      break;
+  }
+}
+
+export function drawStadium(g: G, viewW: number, themeId?: string): void {
+  const t = pitchById(themeId);
   const { left, right, top, bottom, goalTop, goalBottom, goalDepth } = F;
   const midX = (left + right) / 2;
   const midY = (top + bottom) / 2;
@@ -400,62 +553,46 @@ export function drawStadium(g: G, viewW: number): void {
   const x0 = -(viewW - F.w) / 2 - 200;
   const x1 = F.w + (viewW - F.w) / 2 + 200;
 
-  g.fillStyle(0x15351f).fillRect(x0, -300, x1 - x0, F.h + 600);
+  g.fillStyle(t.surround).fillRect(x0, -300, x1 - x0, F.h + 600);
 
-  // Crowd behind each goal, where there is room on a wide screen.
+  // Behind each goal, where there is room on a wide screen.
   for (const side of [-1, 1]) {
     const edge = side < 0 ? left - goalDepth - 26 : right + goalDepth + 26;
     const depth = side < 0 ? edge - x0 : x1 - edge;
     if (depth < 70) continue;
     const sx = side < 0 ? x0 : edge;
-    g.fillStyle(0x24402c).fillRect(sx, top - 40, depth, bottom - top + 80);
-    const cols = Math.floor(depth / 17);
-    const rows = Math.floor((bottom - top + 80) / 17);
-    for (let i = 0; i < cols; i++) {
-      for (let j = 0; j < rows; j++) {
-        if (rand() < 0.18) continue;
-        const cx = sx + 9 + i * 17 + (j % 2) * 4;
-        const cy = top - 32 + j * 17;
-        g.fillStyle(CROWD[Math.floor(rand() * CROWD.length)], 0.75).fillCircle(cx, cy, 5);
-      }
-    }
-    // Barrier in front of the stand.
-    g.fillStyle(0x0e2817).fillRect(side < 0 ? edge - 10 : edge, top - 40, 10, bottom - top + 80);
+    g.fillStyle(t.stand).fillRect(sx, top - 40, depth, bottom - top + 80);
+    drawStand(g, t, sx, depth, side, rand);
+    g.fillStyle(0x000000, 0.3).fillRect(side < 0 ? edge - 10 : edge, top - 40, 10, bottom - top + 80);
   }
 
-  // Advertising boards along both touchlines.
-  for (let i = 0; i * 118 < right - left; i++) {
-    const bx = left + i * 118;
-    const bw = Math.min(110, right - bx);
-    if (bw < 20) break;
-    g.fillStyle(BOARDS[i % BOARDS.length], 0.9).fillRect(bx, top - 26, bw, 18);
-    g.fillStyle(BOARDS[(i + 2) % BOARDS.length], 0.9).fillRect(bx, bottom + 6, bw, 14);
-  }
-  g.fillStyle(0x0e2817).fillRect(left - 6, top - 30, right - left + 12, 5);
-  g.fillStyle(0x0e2817).fillRect(left - 6, bottom + 21, right - left + 12, 4);
+  drawTouchlines(g, t, rand);
+  g.fillStyle(0x000000, 0.3).fillRect(left - 6, top - 32, right - left + 12, 5);
+  g.fillStyle(0x000000, 0.3).fillRect(left - 6, bottom + 22, right - left + 12, 4);
 
   // Grass, mowed in stripes, lighter towards the middle.
   const stripes = 10;
   const sw = (right - left) / stripes;
   for (let i = 0; i < stripes; i++) {
-    g.fillStyle(i % 2 === 0 ? 0x3fae52 : 0x37a04a).fillRect(left + i * sw, top, sw, bottom - top);
+    const col = t.stripes ? t.stripes[i % t.stripes.length] : (i % 2 === 0 ? t.grassA : t.grassB);
+    g.fillStyle(col).fillRect(left + i * sw, top, sw, bottom - top);
   }
-  g.fillStyle(0x48b85c, 0.22).fillEllipse(midX, midY, (right - left) * 0.8, (bottom - top) * 0.85);
+  g.fillStyle(0xffffff, 0.1).fillEllipse(midX, midY, (right - left) * 0.8, (bottom - top) * 0.85);
 
   // Markings.
-  g.lineStyle(5, 0xffffff, 0.92);
+  g.lineStyle(5, t.line, t.lineAlpha);
   g.strokeRect(left, top, right - left, bottom - top);
   g.lineBetween(midX, top, midX, bottom);
   g.strokeCircle(midX, midY, 85);
-  g.fillStyle(0xffffff, 0.92).fillCircle(midX, midY, 7);
+  g.fillStyle(t.line, t.lineAlpha).fillCircle(midX, midY, 7);
 
   for (const side of [-1, 1]) {
     const gx = side < 0 ? left : right;
-    g.lineStyle(5, 0xffffff, 0.92);
+    g.lineStyle(5, t.line, t.lineAlpha);
     g.strokeRect(side < 0 ? gx : gx - 160, midY - 175, 160, 350);
     g.strokeRect(side < 0 ? gx : gx - 60, midY - 102, 60, 204);
     // Penalty spot and the arc at the edge of the box.
-    g.fillStyle(0xffffff, 0.92).fillCircle(gx + side * 112, midY, 5);
+    g.fillStyle(t.line, t.lineAlpha).fillCircle(gx + side * 112, midY, 5);
     g.beginPath();
     g.arc(gx + side * 112, midY, 62, side < 0 ? -Math.PI / 3 : Math.PI * 2 / 3, side < 0 ? Math.PI / 3 : Math.PI * 4 / 3);
     g.strokePath();
@@ -479,7 +616,7 @@ export function drawStadium(g: G, viewW: number): void {
       const a0 = vy === top
         ? (side < 0 ? 0 : Math.PI / 2)
         : (side < 0 ? -Math.PI / 2 : Math.PI);
-      g.lineStyle(4, 0xffffff, 0.85);
+      g.lineStyle(4, t.line, 0.85);
       g.beginPath();
       g.arc(gx, vy, 16, a0, a0 + Math.PI / 2);
       g.strokePath();

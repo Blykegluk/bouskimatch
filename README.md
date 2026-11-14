@@ -9,7 +9,14 @@ Petit jeu de foot rigolo pour enfants (6-12 ans), jouable dans le navigateur sur
 Les cinq étapes prévues sont faites : prototype, match 3 contre 3, jeu à deux en ligne,
 personnages et rendu, finitions.
 
-La suite suit `docs/PROGRESSION.md`. Le lot A est en place : chaque match rapporte des
+La suite suit `docs/PROGRESSION.md`. Le lot C (rendu) est fait en partie : les
+personnages ont une tête, un maillot, des bras et des jambes au lieu d'être des
+boules, quatre terrains au choix (stade, château, arc-en-ciel, plage) et des buts
+plus grands avec un gardien moins infaillible — `node tools/balance.ts` rejoue des
+matchs entiers sans navigateur pour mesurer ça (un enfant marquait 0,9 but par
+match en facile, il en marque 3,1).
+
+Le lot A est en place : chaque match rapporte des
 ballons d’or (partie jouée, victoire, buts, but au canon, arrêts, première partie du jour),
 l’écran de fin les égrène un par un, et la barre de niveau se remplit — 30 niveaux, rien ne
 se perd jamais, et rien de tout ça ne rend plus fort contre un copain. Le niveau et le total

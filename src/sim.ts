@@ -9,8 +9,8 @@ export const F = {
   right: 1200,
   top: 124,
   bottom: 672,
-  goalTop: 318,
-  goalBottom: 478,
+  goalTop: 300,
+  goalBottom: 496,
   goalDepth: 46,
 };
 
@@ -26,8 +26,8 @@ const CHARGE_SLOWDOWN = 0.7;
 const SLIDE_SPEED = 600;
 const SLIDE_TIME = 0.3;
 const SLIDE_CD = 0.9;
-const KICK_MIN = 600;
-const KICK_MAX = 1020;
+const KICK_MIN = 650;
+const KICK_MAX = 1120;
 const KICK_CD = 0.3;
 const PASS_TAP = 0.17;
 const BALL_DRAG = 0.9;
@@ -36,11 +36,11 @@ const NET_DRAG = 9;
 const WALL_BOUNCE = 0.72;
 const NET_BOUNCE = 0.12;
 const POST_R = 7;
-const KEEPER_SPEED = 205;
+const KEEPER_SPEED = 175;
 const GOAL_PAUSE = 2.6;
 const KICKOFF_PAUSE = 1.1;
 // How far outside the goal mouth a shot may point and still be bent on target.
-const AIM_ASSIST_MARGIN = 150;
+const AIM_ASSIST_MARGIN = 200;
 
 // Abilities.
 const METER_RATE = 0.028;
@@ -81,12 +81,14 @@ interface DiffCfg {
   shootRange: number;
   error: number;
   meter: number;
+  /** How much the computer aims away from the keeper: 0 shoots at them. */
+  finish: number;
 }
 
 export const DIFFS: Record<Difficulty, DiffCfg> = {
-  easy: { speed: 0.74, react: 0.42, press: 170, shootRange: 330, error: 0.34, meter: 0.5 },
-  normal: { speed: 0.89, react: 0.24, press: 235, shootRange: 400, error: 0.17, meter: 0.85 },
-  champion: { speed: 1.0, react: 0.11, press: 310, shootRange: 470, error: 0.06, meter: 1.15 },
+  easy: { speed: 0.74, react: 0.42, press: 170, shootRange: 330, error: 0.34, meter: 0.5, finish: 0.1 },
+  normal: { speed: 0.92, react: 0.22, press: 235, shootRange: 420, error: 0.15, meter: 0.85, finish: 0.62 },
+  champion: { speed: 1.0, react: 0.11, press: 310, shootRange: 490, error: 0.06, meter: 1.15, finish: 0.85 },
 };
 
 export interface PlayerInput {
@@ -526,16 +528,16 @@ function updateKeeper(s: GameState, idx: number, dt: number): void {
   const approach = b.vx * sign;
   if (approach > 60) {
     const t = ((home - b.x) * sign) / approach;
-    if (t > 0 && t < 1.2) ty = b.y + b.vy * t;
+    if (t > 0 && t < 0.8) ty = b.y + b.vy * t;
   }
   ty = clamp(ty, F.goalTop + 14, F.goalBottom - 14);
   const dist = Math.hypot(b.x - home, b.y - p.y);
-  const tx = home - sign * 44 * clamp((420 - dist) / 420, 0, 1);
+  const tx = home - sign * 30 * clamp((420 - dist) / 420, 0, 1);
   const diffMul = p.team === 1 ? DIFFS[s.difficulty].speed : 1;
   const speed = s.phase === 'play' ? KEEPER_SPEED * diffMul : 0;
 
-  p.vx = clamp((tx - p.x) * 8, -speed, speed);
-  p.vy = clamp((ty - p.y) * 8, -speed, speed);
+  p.vx = clamp((tx - p.x) * 6, -speed, speed);
+  p.vy = clamp((ty - p.y) * 6, -speed, speed);
   p.x += p.vx * dt;
   p.y += p.vy * dt;
 
@@ -798,7 +800,15 @@ function aiInput(s: GameState, idx: number, dt: number): PlayerInput {
     });
 
     tx = goalX;
-    ty = clamp(b.y, F.goalTop + 30, F.goalBottom - 30) + p.aimErrY * 0.4;
+    // Aim away from where their keeper is standing, more so on hard levels.
+    let aimY = clamp(b.y, F.goalTop + 30, F.goalBottom - 30);
+    const theirGk = s.players.find((q) => q.team !== p.team && q.keeper);
+    if (theirGk) {
+      const midY = (F.goalTop + F.goalBottom) / 2;
+      const gap = theirGk.y > midY ? F.goalTop + 28 : F.goalBottom - 28;
+      aimY += (gap - aimY) * cfg.finish;
+    }
+    ty = aimY + p.aimErrY * 0.4;
 
     if (goalDist < cfg.shootRange && Math.abs(p.y - (F.top + F.bottom) / 2) < 280) {
       inp.shoot = true;

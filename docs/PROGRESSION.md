@@ -108,13 +108,19 @@ plus il y a de choses à gagner, plus elles doivent être jolies.
 - Et une mesure de vitesse sur un vieux téléphone à chaque lot : si on
   descend sous 50 images par seconde, je recule.
 
+Fait le 14/11 : personnages avec tête, maillot, bras, jambes et chaussures, qui
+regardent dans la direction où ils courent ; quatre terrains au choix dans le
+menu (stade, château fort, arc-en-ciel, plage), le même pour les deux joueurs en
+ligne. Buts élargis et gardien moins infaillible : en facile un enfant passe
+d'environ un but par match à trois.
+
 ## 7. Les lots, dans l’ordre
 
 | Lot | Contenu | Ce que tu verras |
 |---|---|---|
 | A ✅ | Ballons d’or, niveaux, écran de fin qui récompense, sauvegarde | Chaque partie fait avancer une barre |
 | B | L’album + 12 tenues + 8 ballons | Un écran de collection qui se remplit |
-| C | Rendu des personnages et du terrain (§6) | Le jeu ne ressemble plus à un prototype |
+| C ⏳ | Rendu des personnages et du terrain (§6) | Le jeu ne ressemble plus à un prototype |
 | D | 6 nouveaux personnages | 12 personnages au total |
 | E | 4 nouveaux pouvoirs + écran de choix | Des façons de jouer différentes |
 | F | Défis, célébrations, stades, trophées | De quoi revenir longtemps |

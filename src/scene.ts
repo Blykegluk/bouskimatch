@@ -43,6 +43,7 @@ export class MatchScene extends Phaser.Scene {
   private state!: GameState;
   private acc = 0;
   private charPick = 0;
+  private pitchTheme = 'stade';
   private difficulty: Difficulty = 'easy';
   /** 'solo' plays alone; 'host' runs the match for both; 'guest' draws what the host sends. */
   private role: 'solo' | 'host' | 'guest' = 'solo';
@@ -94,11 +95,12 @@ export class MatchScene extends Phaser.Scene {
   }
 
   init(data: {
-    charPick?: number; difficulty?: Difficulty;
+    charPick?: number; difficulty?: Difficulty; theme?: string;
     role?: 'solo' | 'host' | 'guest'; link?: HostLink | GuestLink; start?: Omit<StartMsg, 't'>;
   }): void {
     this.charPick = data.charPick ?? 0;
     this.difficulty = data.difficulty ?? 'easy';
+    this.pitchTheme = data.start?.theme ?? data.theme ?? (this.registry.get('themePick') as string) ?? 'stade';
     this.role = data.role ?? 'solo';
     this.link = data.link ?? null;
     this.start = data.start ?? null;
@@ -136,6 +138,10 @@ export class MatchScene extends Phaser.Scene {
 
     this.world = this.add.container(0, 0);
     this.pitch = this.add.graphics();
+    // A restart makes a fresh, empty pitch graphic, so force it to be drawn.
+    this.pitchW = 0;
+    this.layoutW = 0;
+    this.lastScore = '';
     this.world.add(this.pitch);
     this.fx = [];
     this.charAnims = this.state.players.map(() => {
@@ -383,7 +389,7 @@ export class MatchScene extends Phaser.Scene {
       this.scene.restart({ role: 'host', link: this.link, start });
       return;
     }
-    this.scene.restart({ charPick: this.charPick, difficulty: this.difficulty });
+    this.scene.restart({ charPick: this.charPick, difficulty: this.difficulty, theme: this.pitchTheme });
   }
 
   private quitToMenu(): void {
@@ -517,7 +523,7 @@ export class MatchScene extends Phaser.Scene {
     if (this.pitchW !== w) {
       this.pitchW = w;
       this.pitch.clear();
-      drawStadium(this.pitch, w);
+      drawStadium(this.pitch, w, this.pitchTheme);
     }
     this.scoreText.setPosition(w / 2, 28);
     this.clockText.setPosition(w / 2, 66);

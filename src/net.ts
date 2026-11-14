@@ -24,6 +24,8 @@ export function normaliseCode(raw: string): string {
 export interface StartMsg {
   t: 'start';
   difficulty: Difficulty;
+  /** Which pitch the host picked, so both ends draw the same one. */
+  theme?: string;
   mode: MatchMode;
   seed: number;
   home: TeamLineup;
