@@ -107,6 +107,7 @@ export const PAY = {
   goal: 2,
   cannonGoal: 1,
   save: 1,
+  maxSaves: 3,
   firstOfDay: 5,
 };
 
@@ -125,11 +126,14 @@ export function rewardFor(t: MatchTally, p: Progress): Reward {
       balls: t.cannonGoals * PAY.cannonGoal,
     });
   }
-  if (t.saves > 0) {
+  // A busy keeper can make twenty saves in one match, which would dwarf
+  // everything the child actually did, so this line is capped.
+  const saves = Math.min(t.saves, PAY.maxSaves);
+  if (saves > 0) {
     lines.push({
       icon: '🧤',
-      label: t.saves > 1 ? `${t.saves} arrêts du gardien` : 'Arrêt du gardien',
-      balls: t.saves * PAY.save,
+      label: saves > 1 ? `${saves} arrêts du gardien` : 'Arrêt du gardien',
+      balls: saves * PAY.save,
     });
   }
   if (p.lastDay !== today()) {
